@@ -2,6 +2,7 @@ import { P2PNode } from './src/daemon/node.js'
 import { pipe } from 'it-pipe'
 import { encode, decode } from 'it-length-prefixed'
 import { fromString, toString } from 'uint8arrays'
+import { multiaddr } from '@multiformats/multiaddr'
 
 const RELAY = '12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
 const TARGET = process.argv[2] || '12D3KooWSPQk2DTx6kxUCQu2Rn7LDywfy9HAmwwEnoFsEskzhdDW'
@@ -30,8 +31,9 @@ async function main() {
     // Open a stream to send a ping
     console.log('\nOpening stream to /openclaw/ping/1.0.0...')
     const stream = await node['node'].dialProtocol(
-      relayAddr,
-      '/openclaw/ping/1.0.0'
+      multiaddr(relayAddr),
+      '/openclaw/ping/1.0.0',
+      { runOnLimitedConnection: true }
     )
     
     const pingMsg = JSON.stringify({ type: 'ping', timestamp: Date.now(), from: node.peerId })

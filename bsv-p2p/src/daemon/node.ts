@@ -269,7 +269,7 @@ export class P2PNode extends EventEmitter {
     if (!this.node) return
 
     // Handle incoming channel protocol streams
-    this.node.handle(CHANNEL_PROTOCOL, async ({ stream, connection }) => {
+    this.node.handle(CHANNEL_PROTOCOL, { runOnLimitedConnection: true }, async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString()
       console.log(`[Protocol] Incoming channel stream from ${peerId}`)
 
@@ -310,7 +310,7 @@ export class P2PNode extends EventEmitter {
     console.log(`[Protocol] Registered handler for ${CHANNEL_PROTOCOL}`)
 
     // Handle ping protocol for connection testing
-    this.node.handle('/openclaw/ping/1.0.0', async ({ stream, connection }) => {
+    this.node.handle('/openclaw/ping/1.0.0', { runOnLimitedConnection: true }, async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString()
       console.log(`[Ping] Incoming ping from ${peerId}`)
 

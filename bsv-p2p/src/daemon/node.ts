@@ -134,6 +134,8 @@ export class P2PNode extends EventEmitter {
     return this.node.getConnections()
   }
 
+  private reservationRefreshInterval: NodeJS.Timeout | null = null
+
   /**
    * Dial the relay server to establish/refresh reservation
    */
@@ -149,6 +151,76 @@ export class P2PNode extends EventEmitter {
     } catch (err: any) {
       console.error(`[Relay] Failed to dial relay: ${err.message}`)
       throw err
+    }
+  }
+
+  /**
+   * Check if we have a valid relay reservation
+   */
+  hasRelayReservation(): boolean {
+    const addrs = this.multiaddrs
+    return addrs.some(a => a.includes('p2p-circuit') && a.includes('167.172.134.84'))
+  }
+
+  /**
+   * Force refresh the relay reservation by reconnecting
+   */
+  async refreshRelayReservation(): Promise<boolean> {
+    console.log(`[Relay] Refreshing reservation...`)
+    
+    try {
+      // Close existing connection to relay to force new reservation
+      const relayPeerId = '12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
+      const connections = this.getConnections()
+      const relayConn = connections.find(c => c.remotePeer.toString() === relayPeerId)
+      
+      if (relayConn) {
+        console.log(`[Relay] Closing existing relay connection...`)
+        await relayConn.close()
+        await new Promise(r => setTimeout(r, 1000))
+      }
+      
+      // Re-dial relay
+      await this.dialRelay(RELAY_ADDR)
+      
+      // Wait for reservation
+      await new Promise(r => setTimeout(r, 3000))
+      
+      const hasReservation = this.hasRelayReservation()
+      console.log(`[Relay] Reservation refresh ${hasReservation ? '✅ SUCCESS' : '❌ FAILED'}`)
+      
+      return hasReservation
+    } catch (err: any) {
+      console.error(`[Relay] Refresh error: ${err.message}`)
+      return false
+    }
+  }
+
+  /**
+   * Start periodic reservation refresh (every 5 minutes)
+   */
+  startReservationRefresh(intervalMs: number = 300000): void {
+    console.log(`[Relay] Starting reservation refresh every ${intervalMs/1000}s`)
+    
+    this.reservationRefreshInterval = setInterval(async () => {
+      if (!this.hasRelayReservation()) {
+        console.log(`[Relay] No reservation detected, refreshing...`)
+        await this.refreshRelayReservation()
+      } else {
+        // Proactively refresh even if we think we have one (they can silently expire)
+        console.log(`[Relay] Proactive reservation refresh...`)
+        await this.refreshRelayReservation()
+      }
+    }, intervalMs)
+  }
+
+  /**
+   * Stop reservation refresh
+   */
+  stopReservationRefresh(): void {
+    if (this.reservationRefreshInterval) {
+      clearInterval(this.reservationRefreshInterval)
+      this.reservationRefreshInterval = null
     }
   }
 
@@ -230,6 +302,8 @@ export class P2PNode extends EventEmitter {
       clearInterval(this.announcementInterval)
       this.announcementInterval = null
     }
+    
+    this.stopReservationRefresh()
 
     if (this.node) {
       await this.node.stop()

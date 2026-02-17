@@ -348,6 +348,10 @@ async function main(): Promise<void> {
     healthMonitor = new DaemonHealthMonitor(node, config)
     await healthMonitor.start()
     
+    // Start reservation refresh (every 2 minutes to prevent silent expiration)
+    node.startReservationRefresh(120000)
+    log('INFO', 'STARTUP', 'Relay reservation refresh started (every 2m)')
+    
     // Set up event logging
     node.on('peer:connected', (peerId) => {
       log('DEBUG', 'EVENT', `Peer connected: ${peerId}`)

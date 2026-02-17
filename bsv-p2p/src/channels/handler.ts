@@ -24,7 +24,7 @@ import {
   CHANNEL_PROTOCOL,
   serializeMessage,
   deserializeMessage
-} from './protocol.js'
+} from './wire.js'
 import {
   createMultisigLockingScript,
   createCommitmentTransaction,

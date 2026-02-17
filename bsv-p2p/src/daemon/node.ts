@@ -29,7 +29,7 @@ import {
   PROTOCOLS
 } from './types.js'
 import { GatewayClient, GatewayConfig } from './gateway.js'
-import { ChannelMessage, ChannelMessageType, deserializeMessage, CHANNEL_PROTOCOL } from '../channels/protocol.js'
+import { ChannelMessage, ChannelMessageType, deserializeMessage, CHANNEL_PROTOCOL } from '../channels/wire.js'
 import { MessageHandler, formatMessageForAgent, Message, MessageType, TextMessage, RequestMessage, PaidRequestMessage, MESSAGE_PROTOCOL } from '../protocol/index.js'
 
 const KEY_FILE = join(homedir(), '.bsv-p2p', 'peer-key.json')

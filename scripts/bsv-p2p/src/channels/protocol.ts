@@ -242,9 +242,9 @@ export function signMessage(message: ChannelMessage, privateKey: PrivateKey): st
   // Create a copy without the signature field
   const { signature: _, ...messageWithoutSig } = message
   const messageBytes = new TextEncoder().encode(JSON.stringify(messageWithoutSig))
-  const hash = Hash.sha256(messageBytes)
+  const hash = Hash.sha256(Array.from(messageBytes))
   const sig = privateKey.sign(hash)
-  return sig.toDER().toString('hex')
+  return Buffer.from(sig.toDER()).toString('hex')
 }
 
 /**
@@ -256,13 +256,13 @@ export function verifyMessageSignature(message: ChannelMessage, publicKey: strin
   try {
     const { signature, ...messageWithoutSig } = message
     const messageBytes = new TextEncoder().encode(JSON.stringify(messageWithoutSig))
-    const hash = Hash.sha256(messageBytes)
+    const hash = Hash.sha256(Array.from(messageBytes))
     const pubKey = PublicKey.fromString(publicKey)
-    const sig = Buffer.from(signature, 'hex')
+    const sigBytes = Array.from(Buffer.from(signature, 'hex'))
     
     // Import signature from DER
     const { Signature } = require('@bsv/sdk')
-    const sigObj = Signature.fromDER(sig)
+    const sigObj = Signature.fromDER(sigBytes)
     
     return pubKey.verify(hash, sigObj)
   } catch {

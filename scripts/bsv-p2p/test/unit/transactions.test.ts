@@ -79,7 +79,7 @@ describe('Payment Channel Transactions', () => {
       
       expect(tx).toBeInstanceOf(Transaction)
       expect(tx.version).toBe(2)
-      expect(tx.nLockTime).toBe(baseParams.nLockTime)
+      expect(tx.lockTime).toBe(baseParams.nLockTime)
       expect(tx.inputs.length).toBe(1)
       expect(tx.outputs.length).toBe(2)  // One for each party
     })
@@ -91,7 +91,7 @@ describe('Payment Channel Transactions', () => {
         nLockTime: futureTime
       })
       
-      expect(tx.nLockTime).toBe(futureTime)
+      expect(tx.lockTime).toBe(futureTime)
     })
 
     it('should use nSequence for replacement ordering', () => {
@@ -171,7 +171,7 @@ describe('Payment Channel Transactions', () => {
     it('should have zero locktime for immediate broadcast', () => {
       const tx = createSettlementTransaction(baseParams)
       
-      expect(tx.nLockTime).toBe(0)
+      expect(tx.lockTime).toBe(0)
     })
 
     it('should not be replaceable (final)', () => {
@@ -336,7 +336,7 @@ describe('Payment Channel Transactions', () => {
       })
       
       expect(settlement.inputs[0].sequence).toBe(SEQUENCE_FINAL)
-      expect(settlement.nLockTime).toBe(0)
+      expect(settlement.lockTime).toBe(0)
       
       // Final balances should be correct
       expect(balanceA).toBe(85000)

@@ -36,8 +36,8 @@ export function createMultisigLockingScript(pubKeyA: string, pubKeyB: string): S
   // OP_2 <pubkey1> <pubkey2> OP_2 OP_CHECKMULTISIG
   return new Script()
     .writeOpCode(0x52)  // OP_2
-    .writeBin(Buffer.from(keys[0], 'hex'))
-    .writeBin(Buffer.from(keys[1], 'hex'))
+    .writeBin(Array.from(Buffer.from(keys[0], 'hex')))
+    .writeBin(Array.from(Buffer.from(keys[1], 'hex')))
     .writeOpCode(0x52)  // OP_2
     .writeOpCode(0xae)  // OP_CHECKMULTISIG
 }
@@ -50,8 +50,8 @@ export function createMultisigUnlockingScript(sigA: string, sigB: string): Scrip
   // Signatures must be in same order as pubkeys in locking script
   return new Script()
     .writeOpCode(0x00)  // OP_0 (dummy)
-    .writeBin(Buffer.from(sigA, 'hex'))
-    .writeBin(Buffer.from(sigB, 'hex'))
+    .writeBin(Array.from(Buffer.from(sigA, 'hex')))
+    .writeBin(Array.from(Buffer.from(sigB, 'hex')))
 }
 
 /**
@@ -126,8 +126,6 @@ export function createFundingTransaction(params: FundingTxParams): Transaction {
     tx.inputs[i].unlockingScriptTemplate = new P2PKH().unlock(input.privateKey)
   }
   
-  tx.sign()
-  
   return tx
 }
 
@@ -186,7 +184,7 @@ export function createCommitmentTransaction(params: CommitmentTxParams): Transac
   
   const tx = new Transaction()
   tx.version = 2
-  tx.nLockTime = nLockTime
+  tx.lockTime = nLockTime
   
   // Input spending the funding output
   // Use sequenceNumber for RBF-style replacement (lower sequence = newer)
@@ -205,21 +203,31 @@ export function createCommitmentTransaction(params: CommitmentTxParams): Transac
   const totalOut = balanceA + balanceB - fee
   
   // Distribute fee proportionally
-  const feeA = Math.floor(fee * balanceA / (balanceA + balanceB))
+  const feeA = balanceA > 0 && balanceB > 0 
+    ? Math.floor(fee * balanceA / (balanceA + balanceB))
+    : (balanceA > 0 ? fee : 0)
   const feeB = fee - feeA
   
-  // Add outputs for both parties (if balance > dust)
+  // Build outputs array and sort by address for deterministic ordering
+  // This ensures both parties build identical transactions
+  const outputs: Array<{ address: string; satoshis: number }> = []
+  
   if (balanceA - feeA > 546) {
-    tx.addOutput({
-      lockingScript: new P2PKH().lock(addressA),
-      satoshis: balanceA - feeA
-    })
+    outputs.push({ address: addressA, satoshis: balanceA - feeA })
   }
   
   if (balanceB - feeB > 546) {
+    outputs.push({ address: addressB, satoshis: balanceB - feeB })
+  }
+  
+  // Sort by address lexicographically for determinism
+  outputs.sort((a, b) => a.address.localeCompare(b.address))
+  
+  // Add sorted outputs to transaction
+  for (const out of outputs) {
     tx.addOutput({
-      lockingScript: new P2PKH().lock(addressB),
-      satoshis: balanceB - feeB
+      lockingScript: new P2PKH().lock(out.address),
+      satoshis: out.satoshis
     })
   }
   
@@ -236,26 +244,34 @@ export function signCommitmentTransaction(
   fundingScript: Script,
   fundingAmount: number
 ): string {
-  // Create signature for input 0 (the funding input)
-  const sigHashType = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
+  const scope = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
   
-  const preimage = tx.signaturePreimage(
-    0,  // input index
-    fundingScript,
-    BigNumber.fromNumber(fundingAmount),
-    sigHashType
-  )
+  // Get the sighash preimage
+  const preimage = TransactionSignature.format({
+    sourceTXID: tx.inputs[0].sourceTXID!,
+    sourceOutputIndex: tx.inputs[0].sourceOutputIndex,
+    sourceSatoshis: fundingAmount,
+    transactionVersion: tx.version,
+    otherInputs: [],  // Only one input
+    outputs: tx.outputs,
+    inputIndex: 0,
+    subscript: fundingScript,
+    inputSequence: tx.inputs[0].sequence!,
+    lockTime: tx.lockTime,
+    scope
+  })
   
-  const hash = Hash.sha256(preimage)
+  // Hash the preimage
+  const hash = Hash.hash256(preimage)
+  
+  // Sign with private key
   const sig = privateKey.sign(hash)
   
-  // Append sighash type
-  const sigWithType = Buffer.concat([
-    sig.toDER(),
-    Buffer.from([sigHashType])
-  ])
+  // Create TransactionSignature with scope
+  const txSig = new TransactionSignature(sig.r, sig.s, scope)
   
-  return sigWithType.toString('hex')
+  // Return in checksig format (DER + sighash byte)
+  return Buffer.from(txSig.toChecksigFormat()).toString('hex')
 }
 
 /**
@@ -272,7 +288,7 @@ export function createSettlementTransaction(params: Omit<CommitmentTxParams, 'se
   tx.inputs[0].sequence = SEQUENCE_FINAL
   
   // Settlement can be broadcast immediately (no locktime needed)
-  tx.nLockTime = 0
+  tx.lockTime = 0
   
   return tx
 }
@@ -288,44 +304,61 @@ export function verifyCommitmentSignature(
   fundingAmount: number
 ): boolean {
   try {
-    const sigBuffer = Buffer.from(signature, 'hex')
-    const sigHashType = sigBuffer[sigBuffer.length - 1]
-    const sigDER = sigBuffer.slice(0, -1)
+    const sigBytes = Array.from(Buffer.from(signature, 'hex'))
+    const txSig = TransactionSignature.fromChecksigFormat(sigBytes)
+    const scope = txSig.scope
     
-    const preimage = tx.signaturePreimage(
-      0,
-      fundingScript,
-      BigNumber.fromNumber(fundingAmount),
-      sigHashType
-    )
+    // Get the sighash preimage
+    const preimage = TransactionSignature.format({
+      sourceTXID: tx.inputs[0].sourceTXID!,
+      sourceOutputIndex: tx.inputs[0].sourceOutputIndex,
+      sourceSatoshis: fundingAmount,
+      transactionVersion: tx.version,
+      otherInputs: [],
+      outputs: tx.outputs,
+      inputIndex: 0,
+      subscript: fundingScript,
+      inputSequence: tx.inputs[0].sequence!,
+      lockTime: tx.lockTime,
+      scope
+    })
     
-    const hash = Hash.sha256(preimage)
+    // Hash the preimage
+    const hash = Hash.hash256(preimage)
+    
+    // Verify with public key
     const pubKey = PublicKey.fromString(publicKey)
-    const sig = Signature.fromDER(sigDER)
-    
-    return pubKey.verify(hash, sig)
-  } catch {
+    return pubKey.verify(hash, txSig)
+  } catch (e) {
+    console.error('Signature verification failed:', e)
     return false
   }
 }
 
 /**
- * Calculate the sighash for a commitment transaction
+ * Get the commitment sighash for a transaction
  * Used for creating signatures
  */
 export function getCommitmentSighash(
   tx: Transaction,
   fundingScript: Script,
   fundingAmount: number
-): Buffer {
-  const sigHashType = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
+): number[] {
+  const scope = TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
   
-  const preimage = tx.signaturePreimage(
-    0,
-    fundingScript,
-    BigNumber.fromNumber(fundingAmount),
-    sigHashType
-  )
+  const preimage = TransactionSignature.format({
+    sourceTXID: tx.inputs[0].sourceTXID!,
+    sourceOutputIndex: tx.inputs[0].sourceOutputIndex,
+    sourceSatoshis: fundingAmount,
+    transactionVersion: tx.version,
+    otherInputs: [],
+    outputs: tx.outputs,
+    inputIndex: 0,
+    subscript: fundingScript,
+    inputSequence: tx.inputs[0].sequence!,
+    lockTime: tx.lockTime,
+    scope
+  })
   
-  return Hash.sha256(preimage)
+  return Hash.hash256(preimage)
 }

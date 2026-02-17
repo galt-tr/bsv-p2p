@@ -259,6 +259,41 @@ export class P2PNode extends EventEmitter {
     })
 
     console.log(`[Protocol] Registered handler for ${CHANNEL_PROTOCOL}`)
+
+    // Handle ping protocol for connection testing
+    this.node.handle('/openclaw/ping/1.0.0', async ({ stream, connection }) => {
+      const peerId = connection.remotePeer.toString()
+      console.log(`[Ping] Incoming ping from ${peerId}`)
+
+      try {
+        // Read the ping message
+        let pingData = ''
+        for await (const chunk of stream.source) {
+          pingData += new TextDecoder().decode(chunk.subarray())
+        }
+        
+        console.log(`[Ping] Received: ${pingData}`)
+        
+        // Parse and respond with pong
+        const ping = JSON.parse(pingData)
+        const pong = JSON.stringify({ 
+          type: 'pong', 
+          timestamp: Date.now(),
+          from: this.peerId,
+          inResponseTo: ping.timestamp
+        })
+        
+        // Send pong response
+        const encoder = new TextEncoder()
+        await stream.sink([encoder.encode(pong)])
+        console.log(`[Ping] Sent pong to ${peerId}`)
+        
+      } catch (err) {
+        console.error(`[Ping] Error handling ping from ${peerId}:`, err)
+      }
+    })
+
+    console.log(`[Protocol] Registered handler for /openclaw/ping/1.0.0`)
   }
 
   /**

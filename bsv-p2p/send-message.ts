@@ -12,21 +12,13 @@ import { yamux } from '@chainsafe/libp2p-yamux'
 import { bootstrap } from '@libp2p/bootstrap'
 import { identify } from '@libp2p/identify'
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2'
-import { generateKeyPair, privateKeyFromProtobuf } from '@libp2p/crypto/keys'
-import { readFileSync, existsSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
+import { generateKeyPair } from '@libp2p/crypto/keys'
 import { MessageHandler, MessageType, Message } from './src/protocol/index.js'
 
 const RELAY = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
-const KEY_FILE = join(homedir(), '.bsv-p2p', 'peer-key.json')
 
+// Always use ephemeral keys for CLI - don't steal daemon's reservation!
 async function loadKey() {
-  if (existsSync(KEY_FILE)) {
-    const keyData = JSON.parse(readFileSync(KEY_FILE, 'utf-8'))
-    const keyBytes = Uint8Array.from(keyData.privateKey)
-    return privateKeyFromProtobuf(keyBytes)
-  }
   return await generateKeyPair('Ed25519')
 }
 

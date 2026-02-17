@@ -269,15 +269,16 @@ export class P2PNode extends EventEmitter {
     if (!this.node) return
 
     // Handle incoming channel protocol streams
+    // libp2p v3 stream API: stream itself is async iterable, use stream.send() for writing
     this.node.handle(CHANNEL_PROTOCOL, { runOnLimitedConnection: true }, async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString()
       console.log(`[Protocol] Incoming channel stream from ${peerId}`)
 
       try {
-        // Read the incoming message
+        // Read the incoming message using v3 API (stream is async iterable)
         const chunks: Uint8Array[] = []
-        for await (const chunk of stream.source) {
-          chunks.push(chunk.subarray())
+        for await (const chunk of stream as AsyncIterable<Uint8Array>) {
+          chunks.push(chunk instanceof Uint8Array ? chunk : (chunk as any).subarray())
         }
         
         if (chunks.length === 0) {
@@ -310,15 +311,17 @@ export class P2PNode extends EventEmitter {
     console.log(`[Protocol] Registered handler for ${CHANNEL_PROTOCOL}`)
 
     // Handle ping protocol for connection testing
+    // libp2p v3 stream API: stream itself is async iterable, use stream.send() for writing
     this.node.handle('/openclaw/ping/1.0.0', { runOnLimitedConnection: true }, async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString()
       console.log(`[Ping] Incoming ping from ${peerId}`)
 
       try {
-        // Read the ping message
+        // Read the ping message using v3 API (stream is async iterable)
         let pingData = ''
-        for await (const chunk of stream.source) {
-          pingData += new TextDecoder().decode(chunk.subarray())
+        for await (const chunk of stream as AsyncIterable<Uint8Array>) {
+          const data = chunk instanceof Uint8Array ? chunk : (chunk as any).subarray()
+          pingData += new TextDecoder().decode(data)
         }
         
         console.log(`[Ping] Received: ${pingData}`)
@@ -332,10 +335,10 @@ export class P2PNode extends EventEmitter {
           inResponseTo: ping.timestamp
         })
         
-        // Send pong response
+        // Send pong response using v3 API (stream.send())
         const encoder = new TextEncoder()
-        await stream.sink([encoder.encode(pong)])
-        console.log(`[Ping] Sent pong to ${peerId}`)
+        const sent = (stream as any).send(encoder.encode(pong))
+        console.log(`[Ping] Sent pong to ${peerId}, result: ${sent}`)
         
       } catch (err) {
         console.error(`[Ping] Error handling ping from ${peerId}:`, err)

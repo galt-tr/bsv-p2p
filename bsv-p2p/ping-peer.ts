@@ -1,11 +1,8 @@
 import { P2PNode } from './src/daemon/node.js'
-import { pipe } from 'it-pipe'
-import { encode, decode } from 'it-length-prefixed'
-import { fromString, toString } from 'uint8arrays'
 import { multiaddr } from '@multiformats/multiaddr'
 
 const RELAY = '12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
-const TARGET = process.argv[2] || '12D3KooWSPQk2DTx6kxUCQu2Rn7LDywfy9HAmwwEnoFsEskzhdDW'
+const TARGET = process.argv[2] || '12D3KooWEaP93ASxzXWJanh11xZ4UneyooPxDmQ9k6L8Rb8s9Dg4'
 
 async function main() {
   const node = new P2PNode({ 
@@ -39,28 +36,46 @@ async function main() {
     const pingMsg = JSON.stringify({ type: 'ping', timestamp: Date.now(), from: node.peerId })
     console.log('📤 Sending:', pingMsg)
     
-    // Send ping and read response
+    // In libp2p v3, use stream.send() for writing
+    const encoder = new TextEncoder()
+    const decoder = new TextDecoder()
+    
+    const sent = (stream as any).send(encoder.encode(pingMsg))
+    console.log('Send result:', sent)
+    
+    // Read response using async iterator
+    console.log('Waiting for response...')
     let response = ''
-    await pipe(
-      [fromString(pingMsg)],
-      encode,
-      stream,
-      decode,
-      async function (source) {
-        for await (const msg of source) {
-          response = toString(msg.subarray())
-          console.log('📥 Received:', response)
-          break
-        }
+    
+    // Set a timeout for reading
+    const timeout = setTimeout(() => {
+      console.log('⏰ Timeout waiting for response')
+      stream.abort(new Error('Timeout'))
+    }, 5000)
+    
+    try {
+      for await (const chunk of stream) {
+        response += decoder.decode(chunk instanceof Uint8Array ? chunk : chunk.subarray())
+        console.log('📥 Received chunk:', response)
+        // After getting response, break
+        break
       }
-    )
+      clearTimeout(timeout)
+    } catch (e: any) {
+      clearTimeout(timeout)
+      if (e.message !== 'Timeout') throw e
+    }
     
     if (response) {
       console.log('\n🎉 PING/PONG SUCCESS!')
+      console.log('Response:', response)
     }
+    
+    await stream.close?.()
     
   } catch (e: any) {
     console.log('❌ Failed:', e.message)
+    console.error(e.stack)
   }
   
   await node.stop()

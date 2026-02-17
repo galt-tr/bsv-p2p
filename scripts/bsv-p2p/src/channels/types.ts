@@ -46,6 +46,12 @@ export interface Channel {
   /** Remote BSV public key (hex) */
   remotePubKey: string
   
+  /** Our BSV address for receiving channel payouts */
+  localAddress: string
+  
+  /** Remote BSV address for their payouts */
+  remoteAddress?: string
+  
   /** Current state */
   state: ChannelState
   
@@ -67,8 +73,14 @@ export interface Channel {
   /** Funding output index */
   fundingOutputIndex?: number
   
+  /** Multisig locking script (hex) - cached for signing */
+  fundingScript?: string
+  
   /** Latest commitment transaction (hex) */
   latestCommitmentTx?: string
+  
+  /** Our signature on latest commitment (hex) */
+  latestLocalSignature?: string
   
   /** Latest commitment signature from remote (hex) */
   latestRemoteSignature?: string
@@ -174,21 +186,4 @@ export interface CommitmentTransaction {
   remoteSignature?: string
 }
 
-// Protocol messages
-export interface ChannelMessage {
-  type: 
-    | 'channel_open_request'
-    | 'channel_open_response'
-    | 'channel_funding_created'
-    | 'channel_funding_signed'
-    | 'channel_payment'
-    | 'channel_payment_ack'
-    | 'channel_close_request'
-    | 'channel_close_ack'
-    | 'channel_dispute'
-  
-  channelId: string
-  payload: any
-  timestamp: number
-  signature?: string
-}
+// Protocol messages are defined in protocol.ts

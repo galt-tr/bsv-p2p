@@ -103,7 +103,7 @@ export class P2PNode extends EventEmitter {
       ],
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
-      peerDiscovery,
+      peerDiscovery: peerDiscovery as any,
       services: {
         identify: identify()
         // Minimal services only - matches working relay test
@@ -218,7 +218,8 @@ export class P2PNode extends EventEmitter {
     if (!this.node) return
 
     // Handle incoming channel protocol streams
-    this.node.handle(CHANNEL_PROTOCOL, async ({ stream, connection }) => {
+    // @ts-ignore - libp2p typing issue
+    this.node.handle(CHANNEL_PROTOCOL, async ({ stream, connection }: any) => {
       const peerId = connection.remotePeer.toString()
       console.log(`[Protocol] Incoming channel stream from ${peerId}`)
 
@@ -377,9 +378,11 @@ Code: ${error.errorCode}
 Message: ${error.errorMessage}`
 
       default:
-        return `[P2P] Message from ${peerShort}...: ${message.type}
-Channel ID: ${message.channelId}
-Data: ${JSON.stringify(message).substring(0, 200)}`
+        // Fallback for any unhandled message types
+        const unknownMsg = message as any
+        return `[P2P] Message from ${peerShort}...: ${unknownMsg.type}
+Channel ID: ${unknownMsg.channelId}
+Data: ${JSON.stringify(unknownMsg).substring(0, 200)}`
     }
   }
 
@@ -397,7 +400,7 @@ Data: ${JSON.stringify(message).substring(0, 200)}`
       throw new Error(`Not connected to peer ${peerId}`)
     }
 
-    const stream = await connections[0].newStream(CHANNEL_PROTOCOL)
+    const stream = await connections[0].newStream(CHANNEL_PROTOCOL) as any
     
     try {
       const data = new TextEncoder().encode(JSON.stringify(message))
@@ -508,7 +511,11 @@ Data: ${JSON.stringify(message).substring(0, 200)}`
       throw new Error(`Not connected to peer ${peerId}`)
     }
 
-    const latency = await this.node.services.ping.ping(peerIdObj)
+    const pingService = (this.node.services as any).ping
+    if (!pingService) {
+      throw new Error('Ping service not available')
+    }
+    const latency = await pingService.ping(peerIdObj)
     return latency
   }
 

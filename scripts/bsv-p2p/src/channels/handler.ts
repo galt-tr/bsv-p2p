@@ -11,7 +11,7 @@ import { EventEmitter } from 'events'
 import { PrivateKey, PublicKey, Transaction } from '@bsv/sdk'
 import { P2PNode } from '../daemon/node.js'
 import { ChannelManager } from './manager.js'
-import { Channel, ChannelPayment, ServiceInfo } from './types.js'
+import { Channel, ChannelPayment } from './types.js'
 import {
   ChannelMessage,
   ChannelMessageType,
@@ -80,6 +80,7 @@ export class ChannelHandler extends EventEmitter {
     this.manager = new ChannelManager({
       privateKey: config.privateKey.toString(),
       publicKey: this.publicKey,
+      address: this.address,
       defaultLifetimeMs: config.defaultLifetimeMs,
       broadcastTx: config.broadcastTx
     })
@@ -136,6 +137,7 @@ export class ChannelHandler extends EventEmitter {
   async openChannel(
     peerId: string,
     remotePubKey: string,
+    remoteAddress: string,
     amount: number,
     lifetimeMs?: number
   ): Promise<Channel> {
@@ -146,6 +148,7 @@ export class ChannelHandler extends EventEmitter {
     const channel = await this.manager.createChannel(
       peerId,
       remotePubKey,
+      remoteAddress,
       amount,
       lifetime
     )
@@ -192,6 +195,7 @@ export class ChannelHandler extends EventEmitter {
         this.node.peerId,
         from,
         request.ourPubKey,
+        request.ourAddress,
         request.proposedCapacity,
         nLockTime
       )

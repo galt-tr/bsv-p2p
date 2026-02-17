@@ -94,7 +94,8 @@ export class P2PNode extends EventEmitter {
           `/ip4/0.0.0.0/tcp/${this.config.port}`,
           '/p2p-circuit'  // Listen via relay for incoming connections
         ],
-        announce: this.config.announceAddrs
+        // Only include announce if non-empty, otherwise let libp2p auto-discover relay addresses
+        ...(this.config.announceAddrs.length > 0 ? { announce: this.config.announceAddrs } : {})
       },
       transports: [
         tcp(),
@@ -104,14 +105,9 @@ export class P2PNode extends EventEmitter {
       streamMuxers: [yamux()],
       peerDiscovery,
       services: {
-        identify: identify(),
-        ping: ping()
-        // Gossipsub and NAT services disabled - they interfere with relay reservations
-        // pubsub: gossipsub({ ... })
-        // autoNAT: autoNAT(),
-        // dcutr: dcutr(),
-        // upnp: uPnPNAT(),
-        // relay: circuitRelayServer({ ... })
+        identify: identify()
+        // Minimal services only - matches working relay test
+        // ping, gossipsub, and NAT services disabled - they interfere with relay reservations
       }
     })
 

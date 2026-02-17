@@ -132,7 +132,15 @@ async function main(): Promise<void> {
     
     console.log('\nDaemon is running. Press Ctrl+C to stop.')
     console.log(`PeerId: ${node.peerId}`)
-    console.log(`Multiaddrs: ${node.multiaddrs.join(', ')}`)
+    
+    // Wait for relay reservation before printing addresses (reservation takes ~3-5s)
+    console.log('Waiting for relay reservation...')
+    await new Promise(r => setTimeout(r, 5000))
+    
+    const addrs = node.multiaddrs
+    const relayAddrs = addrs.filter(a => a.includes('p2p-circuit'))
+    console.log(`Multiaddrs: ${addrs.join(', ')}`)
+    console.log(`Relay addresses: ${relayAddrs.length > 0 ? relayAddrs.join(', ') : 'none'}`)
     
     // Set up event logging
     node.on('peer:connected', (peerId) => {

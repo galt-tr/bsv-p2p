@@ -43,6 +43,11 @@ async function main() {
     const sent = (stream as any).send(encoder.encode(pingMsg))
     console.log('Send result:', sent)
     
+    // Close write side to signal we're done sending
+    // This is critical - the handler's for-await loop won't end until we close
+    console.log('Closing write side...')
+    await (stream as any).closeWrite?.()
+    
     // Read response using async iterator
     console.log('Waiting for response...')
     let response = ''
@@ -51,14 +56,13 @@ async function main() {
     const timeout = setTimeout(() => {
       console.log('⏰ Timeout waiting for response')
       stream.abort(new Error('Timeout'))
-    }, 5000)
+    }, 10000)
     
     try {
-      for await (const chunk of stream) {
-        response += decoder.decode(chunk instanceof Uint8Array ? chunk : chunk.subarray())
-        console.log('📥 Received chunk:', response)
-        // After getting response, break
-        break
+      for await (const chunk of stream as AsyncIterable<Uint8Array>) {
+        const data = chunk instanceof Uint8Array ? chunk : (chunk as any).subarray()
+        response += decoder.decode(data)
+        console.log('📥 Received chunk:', response.substring(0, 100))
       }
       clearTimeout(timeout)
     } catch (e: any) {
@@ -68,10 +72,12 @@ async function main() {
     
     if (response) {
       console.log('\n🎉 PING/PONG SUCCESS!')
-      console.log('Response:', response)
+      console.log('Full response:', response)
+    } else {
+      console.log('\n❌ No response received')
     }
     
-    await stream.close?.()
+    await (stream as any).close?.()
     
   } catch (e: any) {
     console.log('❌ Failed:', e.message)

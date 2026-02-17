@@ -269,20 +269,19 @@ export class P2PNode extends EventEmitter {
     if (!this.node) return
 
     // Handle incoming channel protocol streams
-    // libp2p v3 stream API: stream itself is async iterable, use stream.send() for writing
-    this.node.handle(CHANNEL_PROTOCOL, { runOnLimitedConnection: true }, async ({ stream, connection }) => {
-      const peerId = connection.remotePeer.toString()
-      console.log(`[Protocol] Incoming channel stream from ${peerId}`)
+    // libp2p v3: handler receives stream directly (not { stream, connection })
+    this.node.handle(CHANNEL_PROTOCOL, { runOnLimitedConnection: true }, async (stream: any) => {
+      console.log(`[Protocol] Incoming channel stream`)
 
       try {
         // Read the incoming message using v3 API (stream is async iterable)
         const chunks: Uint8Array[] = []
-        for await (const chunk of stream as AsyncIterable<Uint8Array>) {
-          chunks.push(chunk instanceof Uint8Array ? chunk : (chunk as any).subarray())
+        for await (const chunk of stream) {
+          chunks.push(chunk instanceof Uint8Array ? chunk : chunk.subarray())
         }
         
         if (chunks.length === 0) {
-          console.log(`[Protocol] Empty stream from ${peerId}`)
+          console.log(`[Protocol] Empty stream`)
           return
         }
 
@@ -295,32 +294,31 @@ export class P2PNode extends EventEmitter {
         }
 
         const message = deserializeMessage(data)
-        console.log(`[Protocol] Received ${message.type} from ${peerId}`)
+        console.log(`[Protocol] Received ${message.type}`)
         
-        // Emit the message for local handlers
-        this.emit('channel:message', { peerId, message })
+        // Emit the message for local handlers (peerId unknown in v3 handler)
+        this.emit('channel:message', { peerId: 'unknown', message })
         
         // Wake the agent to handle the message
-        await this.wakeAgentForChannelMessage(peerId, message)
+        await this.wakeAgentForChannelMessage('unknown', message)
 
       } catch (err) {
-        console.error(`[Protocol] Error handling stream from ${peerId}:`, err)
+        console.error(`[Protocol] Error handling stream:`, err)
       }
     })
 
     console.log(`[Protocol] Registered handler for ${CHANNEL_PROTOCOL}`)
 
     // Handle ping protocol for connection testing
-    // libp2p v3 stream API: stream itself is async iterable, use stream.send() for writing
-    this.node.handle('/openclaw/ping/1.0.0', { runOnLimitedConnection: true }, async ({ stream, connection }) => {
-      const peerId = connection.remotePeer.toString()
-      console.log(`[Ping] Incoming ping from ${peerId}`)
+    // libp2p v3: handler receives stream directly (not { stream, connection })
+    this.node.handle('/openclaw/ping/1.0.0', { runOnLimitedConnection: true }, async (stream: any) => {
+      console.log(`[Ping] Incoming ping`)
 
       try {
         // Read the ping message using v3 API (stream is async iterable)
         let pingData = ''
-        for await (const chunk of stream as AsyncIterable<Uint8Array>) {
-          const data = chunk instanceof Uint8Array ? chunk : (chunk as any).subarray()
+        for await (const chunk of stream) {
+          const data = chunk instanceof Uint8Array ? chunk : chunk.subarray()
           pingData += new TextDecoder().decode(data)
         }
         
@@ -336,12 +334,14 @@ export class P2PNode extends EventEmitter {
         })
         
         // Send pong response using v3 API (stream.send())
-        const encoder = new TextEncoder()
-        const sent = (stream as any).send(encoder.encode(pong))
-        console.log(`[Ping] Sent pong to ${peerId}, result: ${sent}`)
+        const sent = stream.send(new TextEncoder().encode(pong))
+        console.log(`[Ping] Sent pong, result: ${sent}`)
+        
+        // Close write side
+        await stream.sendCloseWrite?.()
         
       } catch (err) {
-        console.error(`[Ping] Error handling ping from ${peerId}:`, err)
+        console.error(`[Ping] Error handling ping:`, err)
       }
     })
 

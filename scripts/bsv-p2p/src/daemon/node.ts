@@ -7,6 +7,10 @@ import { bootstrap } from '@libp2p/bootstrap'
 import { mdns } from '@libp2p/mdns'
 import { identify } from '@libp2p/identify'
 import { ping } from '@libp2p/ping'
+import { autoNAT } from '@libp2p/autonat'
+import { dcutr } from '@libp2p/dcutr'
+import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2'
+import { uPnPNAT } from '@libp2p/upnp-nat'
 import { multiaddr } from '@multiformats/multiaddr'
 import { EventEmitter } from 'events'
 import { 
@@ -91,7 +95,10 @@ export class P2PNode extends EventEmitter {
         listen: [listenAddr],
         announce: this.config.announceAddrs.map(a => multiaddr(a))
       },
-      transports: [tcp()],
+      transports: [
+        tcp(),
+        circuitRelayTransport()  // Enable dialing/listening through relays
+      ],
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
       peerDiscovery,
@@ -103,6 +110,15 @@ export class P2PNode extends EventEmitter {
           allowPublishToZeroTopicPeers: true,
           fallbackToFloodsub: false,
           globalSignaturePolicy: 'StrictNoSign'
+        }),
+        // NAT traversal services
+        autoNAT: autoNAT(),  // Detect if behind NAT
+        dcutr: dcutr(),      // Direct Connection Upgrade through Relay (hole punching)
+        upnp: uPnPNAT(),     // Try UPnP port mapping on router
+        relay: circuitRelayServer({  // Act as relay for other peers
+          reservations: {
+            maxReservations: 128
+          }
         })
       }
     })

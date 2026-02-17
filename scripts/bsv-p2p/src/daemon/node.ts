@@ -111,16 +111,13 @@ export class P2PNode extends EventEmitter {
           allowPublishToZeroTopicPeers: true,
           fallbackToFloodsub: false,
           globalSignaturePolicy: 'StrictNoSign'
-        }),
-        // NAT traversal services
-        autoNAT: autoNAT(),  // Detect if behind NAT
-        dcutr: dcutr(),      // Direct Connection Upgrade through Relay (hole punching)
-        upnp: uPnPNAT(),     // Try UPnP port mapping on router
-        relay: circuitRelayServer({  // Act as relay for other peers
-          reservations: {
-            maxReservations: 128
-          }
         })
+        // NAT traversal services disabled for now - they interfere with relay reservations
+        // TODO: Re-enable after fixing compatibility
+        // autoNAT: autoNAT(),
+        // dcutr: dcutr(),
+        // upnp: uPnPNAT(),
+        // relay: circuitRelayServer({ reservations: { maxReservations: 128 } })
       }
     })
 

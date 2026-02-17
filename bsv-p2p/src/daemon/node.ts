@@ -17,6 +17,8 @@ import { EventEmitter } from 'events'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
+import * as lp from 'it-length-prefixed'
+import { pipe } from 'it-pipe'
 import { 
   P2PNodeConfig, 
   PeerInfo, 
@@ -318,30 +320,54 @@ export class P2PNode extends EventEmitter {
       
       // Handle both v2 ({ stream, connection }) and v3 (stream directly) signatures
       const stream = data.stream || data
-      console.log(`[Ping] Stream type:`, stream?.constructor?.name)
+      console.log(`[Ping] Stream type:`, stream?.constructor?.name, 'status:', stream?.status)
 
       try {
-        // Read the ping message (stream is async iterable in v3)
-        let pingData = ''
-        for await (const chunk of stream) {
-          const bytes = chunk instanceof Uint8Array ? chunk : chunk.subarray()
-          pingData += new TextDecoder().decode(bytes)
+        // Use length-prefixed encoding for proper message framing over circuit relay
+        let pingData: any = null
+        
+        await pipe(
+          stream,
+          (source: any) => lp.decode(source),
+          async (source: any) => {
+            for await (const chunk of source) {
+              const bytes = chunk instanceof Uint8Array ? chunk : chunk.subarray()
+              const msg = new TextDecoder().decode(bytes)
+              console.log(`[Ping] Received: ${msg}`)
+              pingData = JSON.parse(msg)
+              break // Only expect one message
+            }
+          }
+        )
+        
+        if (!pingData) {
+          console.log(`[Ping] No data received`)
+          return
         }
         
-        console.log(`[Ping] Received: ${pingData}`)
-        
-        // Parse and respond with pong
-        const ping = JSON.parse(pingData)
+        // Build pong response
         const pong = JSON.stringify({ 
           type: 'pong', 
           timestamp: Date.now(),
           from: this.peerId,
-          inResponseTo: ping.timestamp
+          inResponseTo: pingData.ts || pingData.timestamp
         })
         
-        // Send pong response (v3 uses stream.send())
-        const sent = stream.send(new TextEncoder().encode(pong))
-        console.log(`[Ping] Sent pong, result: ${sent}`)
+        console.log(`[Ping] Sending pong: ${pong}`)
+        
+        // Send response with length prefix
+        const encoded = new TextEncoder().encode(pong)
+        await pipe(
+          [encoded],
+          (source: any) => lp.encode(source),
+          async (source: any) => {
+            for await (const chunk of source) {
+              stream.send(chunk)
+            }
+          }
+        )
+        
+        console.log(`[Ping] Sent pong`)
         
         // Close write side
         await stream.sendCloseWrite?.()

@@ -12,7 +12,11 @@ import { dcutr } from '@libp2p/dcutr'
 import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2'
 import { uPnPNAT } from '@libp2p/upnp-nat'
 import { multiaddr } from '@multiformats/multiaddr'
+import { generateKeyPair, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys'
 import { EventEmitter } from 'events'
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
+import { homedir } from 'os'
+import { join } from 'path'
 import { 
   P2PNodeConfig, 
   PeerInfo, 
@@ -24,6 +28,47 @@ import {
 } from './types.js'
 import { GatewayClient, GatewayConfig } from './gateway.js'
 import { ChannelMessage, ChannelMessageType, deserializeMessage, CHANNEL_PROTOCOL } from '../channels/protocol.js'
+
+const KEY_FILE = join(homedir(), '.bsv-p2p', 'peer-key.json')
+
+/**
+ * Load existing private key or generate a new one
+ */
+async function loadOrGenerateKey(): Promise<ReturnType<typeof privateKeyFromProtobuf>> {
+  const configDir = join(homedir(), '.bsv-p2p')
+  
+  // Ensure config directory exists
+  if (!existsSync(configDir)) {
+    mkdirSync(configDir, { recursive: true })
+  }
+  
+  // Try to load existing key
+  if (existsSync(KEY_FILE)) {
+    try {
+      const keyData = JSON.parse(readFileSync(KEY_FILE, 'utf-8'))
+      const keyBytes = Uint8Array.from(keyData.privateKey)
+      const privateKey = privateKeyFromProtobuf(keyBytes)
+      console.log('[Key] Loaded existing peer key')
+      return privateKey
+    } catch (err) {
+      console.error('[Key] Failed to load existing key, generating new one:', err)
+    }
+  }
+  
+  // Generate new key
+  const privateKey = await generateKeyPair('Ed25519')
+  const keyBytes = privateKeyToProtobuf(privateKey)
+  
+  // Save to disk
+  const keyData = {
+    privateKey: Array.from(keyBytes),
+    createdAt: new Date().toISOString()
+  }
+  writeFileSync(KEY_FILE, JSON.stringify(keyData, null, 2))
+  console.log('[Key] Generated and saved new peer key')
+  
+  return privateKey
+}
 
 export class P2PNode extends EventEmitter {
   private node: Libp2p | null = null
@@ -74,6 +119,9 @@ export class P2PNode extends EventEmitter {
       throw new Error('Node already started')
     }
 
+    // Load or generate persistent peer key
+    const privateKey = await loadOrGenerateKey()
+
     const peerDiscovery = []
     
     // Add bootstrap peers if configured
@@ -89,6 +137,7 @@ export class P2PNode extends EventEmitter {
     }
 
     this.node = await createLibp2p({
+      privateKey,
       addresses: {
         listen: [
           `/ip4/0.0.0.0/tcp/${this.config.port}`,

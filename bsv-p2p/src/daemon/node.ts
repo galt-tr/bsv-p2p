@@ -30,8 +30,10 @@ import {
 } from './types.js'
 import { GatewayClient, GatewayConfig } from './gateway.js'
 import { ChannelMessage, ChannelMessageType, deserializeMessage, CHANNEL_PROTOCOL } from '../channels/protocol.js'
+import { MessageHandler, formatMessageForAgent, Message, MessageType, TextMessage, RequestMessage, PaidRequestMessage, MESSAGE_PROTOCOL } from '../protocol/index.js'
 
 const KEY_FILE = join(homedir(), '.bsv-p2p', 'peer-key.json')
+const RELAY_ADDR = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
 
 /**
  * Load existing private key or generate a new one
@@ -81,6 +83,7 @@ export class P2PNode extends EventEmitter {
   private services: ServiceInfo[] = []
   private bsvIdentityKey: string | null = null
   private announcementInterval: NodeJS.Timeout | null = null
+  private messageHandler: MessageHandler | null = null
 
   constructor(config: P2PNodeConfig = {}) {
     super()
@@ -95,6 +98,13 @@ export class P2PNode extends EventEmitter {
    */
   get gatewayClient(): GatewayClient {
     return this.gateway
+  }
+  
+  /**
+   * Get the message handler for sending P2P messages
+   */
+  get messages(): MessageHandler | null {
+    return this.messageHandler
   }
   
   /**
@@ -201,6 +211,15 @@ export class P2PNode extends EventEmitter {
 
     // Start the node
     await this.node.start()
+
+    // Initialize message handler
+    this.messageHandler = new MessageHandler({
+      node: this.node,
+      peerId: this.peerId,
+      relayAddr: RELAY_ADDR,
+      onMessage: (msg, peerId) => this.handleIncomingMessage(msg, peerId)
+    })
+    this.messageHandler.register()
 
     console.log(`P2P node started with PeerId: ${this.peerId}`)
     console.log(`Listening on: ${this.multiaddrs.join(', ')}`)
@@ -404,6 +423,61 @@ export class P2PNode extends EventEmitter {
     }, { runOnLimitedConnection: true })
 
     console.log(`[Protocol] Registered handler for /openclaw/ping/1.0.0`)
+  }
+
+  /**
+   * Handle incoming P2P message and wake agent
+   */
+  private async handleIncomingMessage(msg: Message, peerId: string): Promise<void> {
+    console.log(`[Message] Handling ${msg.type} from ${peerId.substring(0, 16)}...`)
+    
+    // Emit event for external listeners
+    this.emit('message', { msg, peerId })
+    this.emit(`message:${msg.type}`, { msg, peerId })
+    
+    // Wake agent if gateway is enabled
+    if (!this.gateway.isEnabled) {
+      console.log(`[Message] Gateway not enabled, not waking agent`)
+      return
+    }
+    
+    // Format message for agent
+    const text = formatMessageForAgent(msg, peerId)
+    
+    // Wake the agent
+    const result = await this.gateway.wake(text, { mode: 'now' })
+    
+    if (!result.ok) {
+      console.error(`[Message] Failed to wake agent: ${result.error}`)
+    } else {
+      console.log(`[Message] Agent woken for ${msg.type}`)
+    }
+  }
+
+  /**
+   * Send a text message to another peer
+   */
+  async sendMessage(toPeerId: string, content: string): Promise<void> {
+    if (!this.messageHandler) {
+      throw new Error('Message handler not initialized')
+    }
+    await this.messageHandler.sendText(toPeerId, content)
+  }
+
+  /**
+   * Send a service request to another peer
+   */
+  async sendRequest(
+    toPeerId: string, 
+    service: string, 
+    params: Record<string, any>,
+    timeoutMs?: number
+  ): Promise<any> {
+    if (!this.messageHandler) {
+      throw new Error('Message handler not initialized')
+    }
+    const response = await this.messageHandler.request(toPeerId, service, params, timeoutMs)
+    return response
   }
 
   /**

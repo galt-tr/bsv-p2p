@@ -88,13 +88,13 @@ export class P2PNode extends EventEmitter {
       peerDiscovery.push(mdns())
     }
 
-    const listenAddr = multiaddr(`/ip4/0.0.0.0/tcp/${this.config.port}`)
-    const circuitListenAddr = multiaddr('/p2p-circuit')  // Listen via relay for incoming connections
-    
     this.node = await createLibp2p({
       addresses: {
-        listen: [listenAddr, circuitListenAddr],  // Listen on TCP and via circuit relay
-        announce: this.config.announceAddrs.map(a => multiaddr(a))
+        listen: [
+          `/ip4/0.0.0.0/tcp/${this.config.port}`,
+          '/p2p-circuit'  // Listen via relay for incoming connections
+        ],
+        announce: this.config.announceAddrs
       },
       transports: [
         tcp(),
@@ -105,19 +105,13 @@ export class P2PNode extends EventEmitter {
       peerDiscovery,
       services: {
         identify: identify(),
-        ping: ping(),
-        pubsub: gossipsub({
-          emitSelf: false,
-          allowPublishToZeroTopicPeers: true,
-          fallbackToFloodsub: false,
-          globalSignaturePolicy: 'StrictNoSign'
-        })
-        // NAT traversal services disabled for now - they interfere with relay reservations
-        // TODO: Re-enable after fixing compatibility
+        ping: ping()
+        // Gossipsub and NAT services disabled - they interfere with relay reservations
+        // pubsub: gossipsub({ ... })
         // autoNAT: autoNAT(),
         // dcutr: dcutr(),
         // upnp: uPnPNAT(),
-        // relay: circuitRelayServer({ reservations: { maxReservations: 128 } })
+        // relay: circuitRelayServer({ ... })
       }
     })
 

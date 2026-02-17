@@ -131,12 +131,14 @@ describe('E2E: Paid Poem Generation', () => {
     managerA = new ChannelManager({
       privateKey: walletA.key.toString(),
       publicKey: walletA.publicKey,
+      address: walletA.address,
       broadcastTx: (tx) => walletA.broadcast(tx)
     })
 
     managerB = new ChannelManager({
       privateKey: walletB.key.toString(),
       publicKey: walletB.publicKey,
+      address: walletB.address,
       broadcastTx: (tx) => walletB.broadcast(tx)
     })
 
@@ -181,6 +183,7 @@ describe('E2E: Paid Poem Generation', () => {
     const channel = await managerA.createChannel(
       peerB.peerId,
       walletB.publicKey,
+      walletB.address,
       CHANNEL_CAPACITY,
       3600000  // 1 hour
     )
@@ -198,6 +201,7 @@ describe('E2E: Paid Poem Generation', () => {
       peerB.peerId,
       peerA.peerId,
       walletA.publicKey,
+      walletA.address,
       CHANNEL_CAPACITY,
       channel.nLockTime
     )
@@ -220,16 +224,8 @@ describe('E2E: Paid Poem Generation', () => {
     // Generate the poem (would normally happen on peer B)
     const poem = generatePoem('Bitcoin')
 
-    // Peer B processes the payment
-    await managerB.processPayment({
-      channelId,
-      amount: POEM_PRICE,
-      newSequenceNumber: payment.newSequenceNumber,
-      newLocalBalance: payment.newLocalBalance,  // From A's perspective
-      newRemoteBalance: payment.newRemoteBalance,
-      signature: '',
-      timestamp: Date.now()
-    })
+    // Peer B processes the payment (using the real signature from A)
+    await managerB.processPayment(payment)
 
     // Verify poem was generated
     expect(poem).toContain('Bitcoin')
@@ -250,15 +246,8 @@ describe('E2E: Paid Poem Generation', () => {
       const payment = await managerA.createPayment(channelId, POEM_PRICE)
       const poem = generatePoem(topic)
       
-      await managerB.processPayment({
-        channelId,
-        amount: POEM_PRICE,
-        newSequenceNumber: payment.newSequenceNumber,
-        newLocalBalance: payment.newLocalBalance,
-        newRemoteBalance: payment.newRemoteBalance,
-        signature: '',
-        timestamp: Date.now()
-      })
+      // Use the real signature from A
+      await managerB.processPayment(payment)
 
       expect(poem).toContain(topic)
     }
@@ -327,7 +316,7 @@ describe('E2E: Paid Poem Generation', () => {
 
     // Verify settlement tx properties
     expect(settlementTx.inputs[0].sequence).toBe(SEQUENCE_FINAL)
-    expect(settlementTx.nLockTime).toBe(0)
+    expect(settlementTx.lockTime).toBe(0)
 
     // Use mock settlement txid (in real impl would be properly signed tx)
     const settlementTxId = 's'.repeat(64)

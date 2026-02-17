@@ -1,0 +1,39 @@
+{
+  "name": "bsv-wallet-cli",
+  "version": "0.1.0",
+  "description": "BSV Wallet CLI - Local SPV wallet using @bsv/wallet-toolbox",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "bsv-wallet": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/cli.ts",
+    "dev": "tsx watch src/cli.ts",
+    "wallet": "tsx src/cli.ts"
+  },
+  "keywords": [
+    "bsv",
+    "bitcoin",
+    "wallet",
+    "spv",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@bsv/sdk": "^1.2.62",
+    "@bsv/wallet-toolbox": "^1.0.51",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "dotenv": "^17.3.1",
+    "knex": "^3.1.0",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}

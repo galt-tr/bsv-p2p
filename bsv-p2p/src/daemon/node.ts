@@ -116,6 +116,32 @@ export class P2PNode extends EventEmitter {
     return this.node !== null
   }
 
+  /**
+   * Get all current connections
+   */
+  getConnections(): any[] {
+    if (!this.node) return []
+    return this.node.getConnections()
+  }
+
+  /**
+   * Dial the relay server to establish/refresh reservation
+   */
+  async dialRelay(relayAddr: string): Promise<void> {
+    if (!this.node) throw new Error('Node not started')
+    
+    const ma = multiaddr(relayAddr)
+    console.log(`[Relay] Dialing relay: ${relayAddr}`)
+    
+    try {
+      await this.node.dial(ma)
+      console.log(`[Relay] Connected to relay`)
+    } catch (err: any) {
+      console.error(`[Relay] Failed to dial relay: ${err.message}`)
+      throw err
+    }
+  }
+
   async start(): Promise<void> {
     if (this.node) {
       throw new Error('Node already started')

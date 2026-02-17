@@ -270,7 +270,7 @@ export class P2PNode extends EventEmitter {
 
     // Handle incoming channel protocol streams
     // Handler signature varies by libp2p version - accept both formats
-    this.node.handle(CHANNEL_PROTOCOL, { runOnLimitedConnection: true }, async (data: any) => {
+    this.node.handle(CHANNEL_PROTOCOL, async (data: any) => {
       // Handle both v2 ({ stream, connection }) and v3 (stream directly) signatures
       const stream = data.stream || data
       console.log(`[Protocol] Incoming channel stream, type:`, stream?.constructor?.name)
@@ -288,14 +288,14 @@ export class P2PNode extends EventEmitter {
         }
 
         // Combine chunks and deserialize
-        const data = new Uint8Array(chunks.reduce((acc, c) => acc + c.length, 0))
+        const combinedData = new Uint8Array(chunks.reduce((acc, c) => acc + c.length, 0))
         let offset = 0
         for (const chunk of chunks) {
-          data.set(chunk, offset)
+          combinedData.set(chunk, offset)
           offset += chunk.length
         }
 
-        const message = deserializeMessage(data)
+        const message = deserializeMessage(combinedData)
         console.log(`[Protocol] Received ${message.type}`)
         
         // Emit the message for local handlers (peerId unknown in v3 handler)
@@ -307,13 +307,13 @@ export class P2PNode extends EventEmitter {
       } catch (err) {
         console.error(`[Protocol] Error handling stream:`, err)
       }
-    })
+    }, { runOnLimitedConnection: true })
 
     console.log(`[Protocol] Registered handler for ${CHANNEL_PROTOCOL}`)
 
     // Handle ping protocol for connection testing
     // Handler signature varies by libp2p version - accept both formats
-    this.node.handle('/openclaw/ping/1.0.0', { runOnLimitedConnection: true }, async (data: any) => {
+    this.node.handle('/openclaw/ping/1.0.0', async (data: any) => {
       console.log(`[Ping] Handler called, data type:`, data?.constructor?.name)
       
       // Handle both v2 ({ stream, connection }) and v3 (stream directly) signatures
@@ -349,7 +349,7 @@ export class P2PNode extends EventEmitter {
       } catch (err) {
         console.error(`[Ping] Error handling ping:`, err)
       }
-    })
+    }, { runOnLimitedConnection: true })
 
     console.log(`[Protocol] Registered handler for /openclaw/ping/1.0.0`)
   }

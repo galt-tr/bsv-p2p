@@ -49,7 +49,6 @@ async function main() {
   
   await new Promise(r => setTimeout(r, 2000))
 
-  // Dial target via relay
   const relayAddr = multiaddr(`${RELAY}/p2p-circuit/p2p/${TARGET_PEER}`)
   console.log('Dialing:', relayAddr.toString())
   
@@ -57,49 +56,59 @@ async function main() {
     const conn = await node.dial(relayAddr)
     console.log('✅ Connected!')
     
-    // Open stream to our custom ping protocol
-    console.log('Opening stream to /openclaw/ping/1.0.0...')
     const stream = await conn.newStream('/openclaw/ping/1.0.0', {
       runOnLimitedConnection: true
     })
     console.log('Stream opened, status:', stream.status)
     
-    const pingMsg = JSON.stringify({ type: 'ping', ts: Date.now() })
+    const pingMsg = JSON.stringify({ type: 'ping', ts: Date.now(), from: node.peerId.toString() })
     const encoded = new TextEncoder().encode(pingMsg)
     console.log('Sending:', pingMsg)
     
-    // Try using pipe with length-prefixed encoding
-    let response: string | null = null
+    // Simple approach: encode, send, then read response
+    // Encode with length prefix
+    const lpEncoded: Uint8Array[] = []
+    for await (const chunk of lp.encode([encoded])) {
+      lpEncoded.push(chunk)
+    }
     
-    await pipe(
-      // Source: our message (as single chunk)
-      (async function* () {
-        yield encoded
-      })(),
-      // Encode with length prefix
-      (source) => lp.encode(source),
-      // Duplex through stream
-      stream,
-      // Decode length-prefixed response
-      (source) => lp.decode(source),
-      // Collect response
-      async (source) => {
-        for await (const chunk of source) {
-          const data = chunk instanceof Uint8Array ? chunk : chunk.subarray()
-          response = new TextDecoder().decode(data)
-          console.log('📥 Got response:', response)
-          break // Just get first message
-        }
+    // Send all chunks
+    for (const chunk of lpEncoded) {
+      stream.send(chunk)
+    }
+    console.log('📤 Sent message')
+    
+    // Signal we're done writing
+    await stream.sendCloseWrite?.()
+    console.log('Closed write side')
+    
+    // Read response with timeout
+    console.log('Waiting for response...')
+    const timeout = setTimeout(() => {
+      console.log('⏰ Timeout')
+      stream.abort?.(new Error('Timeout'))
+    }, 10000)
+    
+    try {
+      let response = ''
+      for await (const chunk of lp.decode(stream)) {
+        const data = chunk instanceof Uint8Array ? chunk : chunk.subarray()
+        response = new TextDecoder().decode(data)
+        console.log('📥 Response:', response)
+        break
       }
-    )
-    
-    if (!response) {
-      console.log('❌ No response received')
+      clearTimeout(timeout)
+      
+      if (!response) {
+        console.log('❌ No response')
+      }
+    } catch (readErr: any) {
+      clearTimeout(timeout)
+      console.log('❌ Read error:', readErr.message)
     }
     
   } catch (err: any) {
     console.error('❌ Error:', err.message)
-    console.error(err.stack)
   }
   
   await node.stop()

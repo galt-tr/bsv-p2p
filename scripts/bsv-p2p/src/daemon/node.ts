@@ -89,10 +89,11 @@ export class P2PNode extends EventEmitter {
     }
 
     const listenAddr = multiaddr(`/ip4/0.0.0.0/tcp/${this.config.port}`)
+    const circuitListenAddr = multiaddr('/p2p-circuit')  // Listen via relay for incoming connections
     
     this.node = await createLibp2p({
       addresses: {
-        listen: [listenAddr],
+        listen: [listenAddr, circuitListenAddr],  // Listen on TCP and via circuit relay
         announce: this.config.announceAddrs.map(a => multiaddr(a))
       },
       transports: [

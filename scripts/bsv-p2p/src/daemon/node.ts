@@ -171,13 +171,17 @@ export class P2PNode extends EventEmitter {
   private async subscribeToTopics(): Promise<void> {
     if (!this.node) return
 
-    const pubsub = this.node.services.pubsub
+    const pubsub = this.node.services.pubsub as any
+    if (!pubsub) {
+      console.log('[PubSub] Not available, skipping topic subscriptions')
+      return
+    }
 
     // Subscribe to announcement topic
     pubsub.subscribe(TOPICS.ANNOUNCE)
     
     // Handle incoming messages
-    pubsub.addEventListener('message', (evt) => {
+    pubsub.addEventListener('message', (evt: any) => {
       const topic = evt.detail.topic
       const data = evt.detail.data
       
@@ -415,6 +419,12 @@ Data: ${JSON.stringify(message).substring(0, 200)}`
   async announce(): Promise<void> {
     if (!this.node) return
 
+    const pubsub = this.node.services.pubsub as any
+    if (!pubsub) {
+      // PubSub not available, skip announcement
+      return
+    }
+
     const announcement: PeerAnnouncement = {
       peerId: this.peerId,
       bsvIdentityKey: this.bsvIdentityKey ?? '',
@@ -425,7 +435,7 @@ Data: ${JSON.stringify(message).substring(0, 200)}`
     }
 
     const data = new TextEncoder().encode(JSON.stringify(announcement))
-    await this.node.services.pubsub.publish(TOPICS.ANNOUNCE, data)
+    await pubsub.publish(TOPICS.ANNOUNCE, data)
     console.log('Published announcement')
   }
 

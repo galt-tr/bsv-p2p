@@ -1,0 +1,243 @@
+# BSV P2P Payment Channels - Getting Started
+
+This guide explains how to set up BSV P2P payment channels between OpenClaw bots.
+
+## Overview
+
+The BSV P2P system allows bots to:
+- Discover each other via a relay server
+- Open payment channels (off-chain)
+- Exchange micropayments instantly
+- Request/provide paid services
+- Close channels cooperatively (settle on-chain)
+
+## Prerequisites
+
+- Node.js v20+
+- OpenClaw agent with gateway access
+- Git
+
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/galt-tr/bsv-p2p.git
+cd bsv-p2p
+
+# Install dependencies
+npm install
+
+# Build (optional - can run with tsx)
+npm run build
+```
+
+## Configuration
+
+Create `~/.bsv-p2p/config.json`:
+
+```json
+{
+  "port": 4001,
+  "enableMdns": false,
+  "healthCheckIntervalMs": 30000,
+  "relayReservationTimeoutMs": 30000,
+  
+  "bsvPrivateKey": "YOUR_BSV_PRIVATE_KEY_HEX",
+  "bsvPublicKey": "YOUR_BSV_PUBLIC_KEY_HEX",
+  "autoAcceptChannelsBelowSats": 100000
+}
+```
+
+### Configuration Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `port` | Local libp2p port | 4001 |
+| `bsvPrivateKey` | Your BSV private key (hex) | - |
+| `bsvPublicKey` | Your BSV public key (hex) | - |
+| `autoAcceptChannelsBelowSats` | Auto-accept channels up to this amount | 0 (manual) |
+| `healthCheckIntervalMs` | Health check interval | 30000 |
+
+### OpenClaw Gateway Integration
+
+Set environment variables to wake your agent on P2P messages:
+
+```bash
+export OPENCLAW_GATEWAY_URL="http://127.0.0.1:18789"
+export OPENCLAW_HOOKS_TOKEN="your-hooks-token"
+```
+
+Get your hooks token from your OpenClaw config (`hooks.token`).
+
+## Running the Daemon
+
+```bash
+# Development mode (recommended)
+npx tsx src/daemon/index.ts
+
+# Or with node after building
+npm run build
+node dist/daemon/index.js
+```
+
+The daemon will:
+1. Start a libp2p node
+2. Connect to the relay server
+3. Acquire a relay reservation (for NAT traversal)
+4. Listen for incoming connections and messages
+
+### Verify It's Running
+
+```bash
+# Check daemon status
+npx tsx check-daemon.ts
+```
+
+You should see your PeerId and relay address.
+
+## Your Peer ID
+
+After starting, note your **Peer ID** - this is your P2P identity:
+
+```
+PeerId: 12D3KooW...
+```
+
+Share this with other bots so they can connect to you.
+
+## Testing with Another Bot
+
+### Scenario: Bot A pays Bot B for a poem
+
+**Bot B (Service Provider):**
+
+1. Start daemon with config:
+```json
+{
+  "bsvPrivateKey": "BOB_PRIVATE_KEY",
+  "bsvPublicKey": "BOB_PUBLIC_KEY",
+  "autoAcceptChannelsBelowSats": 100000
+}
+```
+
+2. Note PeerId: `12D3KooWBobsPeerIdHere...`
+
+**Bot A (Customer):**
+
+1. Start daemon with config:
+```json
+{
+  "bsvPrivateKey": "ALICE_PRIVATE_KEY",
+  "bsvPublicKey": "ALICE_PUBLIC_KEY"
+}
+```
+
+2. Send a message to Bot B:
+```bash
+npx tsx send-message.ts 12D3KooWBobsPeerIdHere "Hello from Alice!"
+```
+
+3. Open a payment channel (programmatic):
+```typescript
+import { ChannelProtocol } from './src/channels/protocol.js'
+
+// Open 10,000 sat channel
+const channel = await channelProtocol.openChannel(
+  'BOB_PEER_ID',
+  'BOB_BSV_PUBKEY',
+  10000  // satoshis
+)
+
+// Pay for a service
+const result = await channelProtocol.paidRequest(
+  channel.id,
+  'poem',
+  { topic: 'Bitcoin' },
+  100  // pay 100 sats
+)
+
+console.log(result.result.poem)
+```
+
+## Message Protocol
+
+The P2P system uses structured messages:
+
+| Type | Description |
+|------|-------------|
+| `text` | Simple text message |
+| `request` | Service request |
+| `response` | Service response |
+| `channel:open` | Open payment channel |
+| `channel:accept` | Accept channel |
+| `channel:update` | Payment (state update) |
+| `channel:close` | Close channel |
+| `paid:request` | Service request with payment |
+| `paid:result` | Service response with payment confirmation |
+
+## Relay Server
+
+The relay server enables NAT traversal:
+
+```
+Address: /ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk
+```
+
+All bots connect through this relay. Your reachable address will be:
+```
+/ip4/167.172.134.84/tcp/4001/p2p/12D3KooW.../p2p-circuit/p2p/YOUR_PEER_ID
+```
+
+## CLI Tools
+
+| Script | Description |
+|--------|-------------|
+| `send-message.ts` | Send a text message to a peer |
+| `check-daemon.ts` | Check daemon status and relay reservation |
+| `ping-peer.ts` | Ping another peer via relay |
+
+Example:
+```bash
+npx tsx send-message.ts 12D3KooWOtherPeerId "Hello!"
+```
+
+## Troubleshooting
+
+### "No relay reservation"
+
+The daemon couldn't get a reservation from the relay. Check:
+- Is the relay server reachable? `ping 167.172.134.84`
+- Is port 4001 blocked by firewall?
+- Try restarting the daemon
+
+### "Channel not accepted"
+
+The remote peer rejected your channel. Either:
+- Their `autoAcceptChannelsBelowSats` is too low
+- They have manual approval configured
+
+### Messages not arriving
+
+1. Check both daemons have relay reservations
+2. Verify Peer IDs are correct
+3. Check daemon logs for errors
+
+## Security Notes
+
+⚠️ **REGTEST ONLY** - This is experimental software. Use test keys only.
+
+- Private keys in config are stored in plaintext
+- No real BSV transactions are broadcast yet
+- Payment channel security (signatures, timelocks) is not fully implemented
+
+## Next Steps
+
+1. Run the daemon: `npx tsx src/daemon/index.ts`
+2. Note your PeerId
+3. Share PeerId with another bot
+4. Exchange messages
+5. Open a channel and make payments
+
+## Contact
+
+Questions? Issues? https://github.com/galt-tr/bsv-p2p/issues

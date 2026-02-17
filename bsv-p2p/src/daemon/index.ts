@@ -2,6 +2,8 @@
 
 import { P2PNode } from './node.js'
 import { GatewayConfig } from './gateway.js'
+import { ChannelManager } from '../channels/manager.js'
+import { ChannelProtocol } from '../channels/protocol.js'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -12,10 +14,13 @@ interface DaemonConfig {
   announceAddrs: string[]
   enableMdns: boolean
   bsvIdentityKey?: string
+  bsvPrivateKey?: string
+  bsvPublicKey?: string
   announceIntervalMs: number
   gateway?: GatewayConfig
   healthCheckIntervalMs: number
   relayReservationTimeoutMs: number
+  autoAcceptChannelsBelowSats?: number
 }
 
 const DEFAULT_DAEMON_CONFIG: DaemonConfig = {
@@ -376,6 +381,63 @@ async function main(): Promise<void> {
     node.gatewayClient.on('error', ({ type, error }) => {
       log('ERROR', 'GATEWAY', `Error (${type}): ${error}`)
     })
+    
+    // Initialize payment channels if BSV keys are configured
+    let channelProtocol: ChannelProtocol | null = null
+    if (config.bsvPrivateKey && config.bsvPublicKey) {
+      const channelManager = new ChannelManager({
+        privateKey: config.bsvPrivateKey,
+        publicKey: config.bsvPublicKey
+      })
+      
+      if (node.messages) {
+        channelProtocol = new ChannelProtocol({
+          channelManager,
+          messageHandler: node.messages,
+          peerId: node.peerId,
+          autoAcceptMaxCapacity: config.autoAcceptChannelsBelowSats ?? 0,
+          onChannelReady: (channel) => {
+            log('INFO', 'CHANNEL', `Channel ready: ${channel.id.substring(0, 8)}... with ${channel.remotePeerId.substring(0, 16)}...`)
+          },
+          onPaidRequest: async (req, channel) => {
+            // Wake agent for paid requests
+            log('INFO', 'CHANNEL', `Paid request: ${req.service} for ${req.payment.amount} sats`)
+            
+            // Format message for agent
+            const text = `[P2P Paid Request]
+Service: ${req.service}
+Payment: ${req.payment.amount} sats
+Channel: ${channel.id.substring(0, 16)}
+From: ${req.from.substring(0, 16)}
+Params: ${JSON.stringify(req.params)}
+Request ID: ${req.id}
+
+Respond to complete the service.`
+            
+            await node.gatewayClient.wake(text, { mode: 'now' })
+            
+            // Return pending - agent will respond via CLI
+            return { success: false, error: 'Pending agent response' }
+          }
+        })
+        
+        channelProtocol.on('channel:opened', (channel) => {
+          log('INFO', 'CHANNEL', `Channel opened: ${channel.id.substring(0, 8)}...`)
+        })
+        
+        channelProtocol.on('payment:received', ({ channel, payment }) => {
+          log('INFO', 'CHANNEL', `Payment received: ${payment.amount} sats on channel ${channel.id.substring(0, 8)}...`)
+        })
+        
+        log('INFO', 'STARTUP', 'Payment channels enabled', {
+          autoAccept: config.autoAcceptChannelsBelowSats ?? 0
+        })
+      } else {
+        log('WARN', 'STARTUP', 'Message handler not available, payment channels disabled')
+      }
+    } else {
+      log('INFO', 'STARTUP', 'Payment channels disabled (no BSV keys configured)')
+    }
     
     log('INFO', 'STARTUP', '='.repeat(60))
     log('INFO', 'STARTUP', '✅ Daemon ready and healthy')

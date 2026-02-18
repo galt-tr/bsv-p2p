@@ -11,6 +11,8 @@ export interface P2PNodeConfig {
   enableMdns?: boolean
   /** Gateway webhook configuration for agent wake */
   gateway?: GatewayConfig
+  /** Use ephemeral key instead of loading from disk (useful for tests) */
+  ephemeralKey?: boolean
 }
 
 export interface PeerInfo {
@@ -72,5 +74,6 @@ export const DEFAULT_CONFIG: Required<Omit<P2PNodeConfig, 'gateway'>> = {
   ],
   announceAddrs: [],
   dataDir: '~/.bsv-p2p',
-  enableMdns: true
+  enableMdns: true,
+  ephemeralKey: false
 }

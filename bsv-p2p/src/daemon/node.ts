@@ -37,8 +37,16 @@ const RELAY_ADDR = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC
 
 /**
  * Load existing private key or generate a new one
+ * @param ephemeral If true, always generate a new key without persistence (for testing)
  */
-async function loadOrGenerateKey(): Promise<ReturnType<typeof privateKeyFromProtobuf>> {
+async function loadOrGenerateKey(ephemeral: boolean = false): Promise<ReturnType<typeof privateKeyFromProtobuf>> {
+  // For ephemeral mode (tests), just generate without persistence
+  if (ephemeral) {
+    const privateKey = await generateKeyPair('Ed25519')
+    console.log('[Key] Generated ephemeral peer key (not persisted)')
+    return privateKey
+  }
+  
   const configDir = join(homedir(), '.bsv-p2p')
   
   // Ensure config directory exists
@@ -287,8 +295,8 @@ export class P2PNode extends EventEmitter {
       throw new Error('Node already started')
     }
 
-    // Load or generate persistent peer key
-    const privateKey = await loadOrGenerateKey()
+    // Load or generate peer key (ephemeral for tests)
+    const privateKey = await loadOrGenerateKey(this.config.ephemeralKey)
 
     const peerDiscovery = []
     

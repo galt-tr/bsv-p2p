@@ -556,6 +556,46 @@ Respond to complete the service.`
         return
       }
       
+      // Send payment through a channel
+      if (req.method === 'POST' && req.url === '/channel/pay') {
+        if (!channelProtocol) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Payment channels not enabled' }))
+          return
+        }
+        
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', async () => {
+          try {
+            const { channelId, amount } = JSON.parse(body)
+            if (!channelId || !amount) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing channelId or amount' }))
+              return
+            }
+            
+            log('INFO', 'API', `Sending payment of ${amount} sats on channel ${channelId.substring(0, 8)}...`)
+            const payment = await channelProtocol.pay(channelId, amount)
+            
+            res.writeHead(200)
+            res.end(JSON.stringify({ 
+              success: true,
+              channelId,
+              amount,
+              newLocalBalance: payment.newLocalBalance,
+              newRemoteBalance: payment.newRemoteBalance,
+              sequence: payment.newSequenceNumber
+            }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Payment failed: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+      
       res.writeHead(404)
       res.end(JSON.stringify({ error: 'Not found' }))
     })

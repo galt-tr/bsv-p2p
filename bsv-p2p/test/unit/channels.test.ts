@@ -13,7 +13,8 @@ describe('ChannelManager', () => {
   beforeEach(() => {
     manager = new ChannelManager({
       privateKey: testPrivateKey,
-      publicKey: testPublicKey
+      publicKey: testPublicKey,
+      dbPath: ':memory:'  // Use in-memory database for test isolation
     })
   })
 

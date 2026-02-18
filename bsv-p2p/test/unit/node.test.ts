@@ -23,7 +23,8 @@ describe('P2PNode', () => {
       node = new P2PNode({ 
         port: 0,  // Random port
         bootstrapPeers: [],  // No bootstrap for tests
-        enableMdns: false    // No mDNS for tests
+        enableMdns: false,   // No mDNS for tests
+        ephemeralKey: true   // Don't persist key
       })
     })
 
@@ -69,7 +70,8 @@ describe('P2PNode', () => {
       node = new P2PNode({ 
         port: 0,
         bootstrapPeers: [],
-        enableMdns: false
+        enableMdns: false,
+        ephemeralKey: true
       })
       await node.start()
     })
@@ -141,7 +143,8 @@ describe('P2PNode', () => {
       node = new P2PNode({ 
         port: 0,
         bootstrapPeers: [],
-        enableMdns: false
+        enableMdns: false,
+        ephemeralKey: true
       })
       await node.start()
     })
@@ -164,7 +167,8 @@ describe('createP2PNode helper', () => {
     const node = await createP2PNode({
       port: 0,
       bootstrapPeers: [],
-      enableMdns: false
+      enableMdns: false,
+      ephemeralKey: true
     })
     
     expect(node.isStarted).toBe(true)

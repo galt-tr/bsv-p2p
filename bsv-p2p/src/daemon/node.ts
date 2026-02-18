@@ -134,10 +134,15 @@ export class P2PNode extends EventEmitter {
     return this.node.getConnections()
   }
 
-  private reservationRefreshInterval: NodeJS.Timeout | null = null
+  // Connection maintenance interval (NOT reservation refresh)
+  private relayMaintenanceInterval: NodeJS.Timeout | null = null
+  private static readonly RELAY_PEER_ID = '12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
 
   /**
-   * Dial the relay server to establish/refresh reservation
+   * Dial the relay server to establish connection (which enables reservation).
+   * 
+   * IMPORTANT: Do NOT close this connection! The reservation is only valid
+   * while the connection is maintained. See circuit-v2 spec.
    */
   async dialRelay(relayAddr: string): Promise<void> {
     if (!this.node) throw new Error('Node not started')
@@ -147,7 +152,7 @@ export class P2PNode extends EventEmitter {
     
     try {
       await this.node.dial(ma)
-      console.log(`[Relay] Connected to relay`)
+      console.log(`[Relay] Connected to relay - reservation will be established automatically`)
     } catch (err: any) {
       console.error(`[Relay] Failed to dial relay: ${err.message}`)
       throw err
@@ -155,7 +160,9 @@ export class P2PNode extends EventEmitter {
   }
 
   /**
-   * Check if we have a valid relay reservation
+   * Check if we have a valid relay reservation.
+   * Note: This checks for the presence of relay addresses in our multiaddrs.
+   * The actual reservation validity depends on maintaining the connection.
    */
   hasRelayReservation(): boolean {
     const addrs = this.multiaddrs
@@ -163,65 +170,116 @@ export class P2PNode extends EventEmitter {
   }
 
   /**
-   * Force refresh the relay reservation by reconnecting
+   * Get our relay circuit address if we have one.
    */
-  async refreshRelayReservation(): Promise<boolean> {
-    console.log(`[Relay] Refreshing reservation...`)
+  getRelayAddress(): string | null {
+    return this.multiaddrs.find(a => 
+      a.includes('p2p-circuit') && 
+      a.includes('167.172.134.84')
+    ) || null
+  }
+
+  /**
+   * Check if we're connected to the relay server.
+   * Connection = reservation (per circuit-v2 spec).
+   */
+  isConnectedToRelay(): boolean {
+    if (!this.node) return false
+    const connections = this.node.getConnections()
+    return connections.some(c => c.remotePeer.toString() === P2PNode.RELAY_PEER_ID)
+  }
+
+  /**
+   * Wait for relay reservation to be established (relay address appears in multiaddrs).
+   */
+  private async waitForReservation(timeoutMs: number): Promise<boolean> {
+    const startTime = Date.now()
+    const checkInterval = 500
     
-    try {
-      // Close existing connection to relay to force new reservation
-      const relayPeerId = '12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
-      const connections = this.getConnections()
-      const relayConn = connections.find(c => c.remotePeer.toString() === relayPeerId)
-      
-      if (relayConn) {
-        console.log(`[Relay] Closing existing relay connection...`)
-        await relayConn.close()
-        await new Promise(r => setTimeout(r, 1000))
+    console.log(`[Relay] Waiting for reservation (timeout: ${timeoutMs}ms)...`)
+    
+    while (Date.now() - startTime < timeoutMs) {
+      const relayAddr = this.getRelayAddress()
+      if (relayAddr) {
+        console.log(`[Relay] ✅ Reservation acquired: ${relayAddr}`)
+        return true
       }
       
-      // Re-dial relay
-      await this.dialRelay(RELAY_ADDR)
+      const elapsed = Math.floor((Date.now() - startTime) / 1000)
+      if (elapsed > 0 && elapsed % 5 === 0) {
+        console.log(`[Relay] Still waiting for reservation... (${elapsed}s)`)
+      }
       
-      // Wait for reservation
-      await new Promise(r => setTimeout(r, 3000))
+      await new Promise(r => setTimeout(r, checkInterval))
+    }
+    
+    console.error(`[Relay] ❌ Timeout waiting for reservation`)
+    return false
+  }
+
+  /**
+   * Maintain connection to relay server.
+   * 
+   * This is the KEY to keeping reservations valid. Per circuit-v2 spec:
+   * "The reservation remains valid until its expiration, as long as there 
+   * is an active connection from the peer to the relay. If the peer 
+   * disconnects, the reservation is no longer valid."
+   * 
+   * We do NOT "refresh" reservations by closing/reopening connections.
+   * We simply maintain the connection, and libp2p handles reservation refresh.
+   */
+  startRelayConnectionMaintenance(intervalMs: number = 10_000): void {
+    console.log(`[Relay] Starting connection maintenance (check every ${intervalMs/1000}s)`)
+    
+    const maintainConnection = async () => {
+      if (!this.node) return
       
-      const hasReservation = this.hasRelayReservation()
-      console.log(`[Relay] Reservation refresh ${hasReservation ? '✅ SUCCESS' : '❌ FAILED'}`)
+      const isConnected = this.isConnectedToRelay()
       
-      return hasReservation
-    } catch (err: any) {
-      console.error(`[Relay] Refresh error: ${err.message}`)
-      return false
+      if (!isConnected) {
+        console.warn(`[Relay] ⚠️ Connection lost! Reconnecting...`)
+        try {
+          await this.dialRelay(RELAY_ADDR)
+          // Wait a bit for reservation to be re-established
+          await new Promise(r => setTimeout(r, 2000))
+          
+          if (this.hasRelayReservation()) {
+            console.log(`[Relay] ✅ Reconnected and reservation restored`)
+          } else {
+            console.warn(`[Relay] ⚠️ Reconnected but no reservation yet`)
+          }
+        } catch (err: any) {
+          console.error(`[Relay] ❌ Reconnection failed: ${err.message}`)
+        }
+      }
+      // If connected, do nothing - libp2p handles reservation refresh
+    }
+    
+    // Check immediately
+    maintainConnection()
+    
+    // Then check periodically
+    this.relayMaintenanceInterval = setInterval(maintainConnection, intervalMs)
+  }
+
+  /**
+   * Stop connection maintenance
+   */
+  stopRelayConnectionMaintenance(): void {
+    if (this.relayMaintenanceInterval) {
+      clearInterval(this.relayMaintenanceInterval)
+      this.relayMaintenanceInterval = null
+      console.log(`[Relay] Stopped connection maintenance`)
     }
   }
 
-  /**
-   * Start periodic reservation refresh (every 5 minutes)
-   */
-  startReservationRefresh(intervalMs: number = 300000): void {
-    console.log(`[Relay] Starting reservation refresh every ${intervalMs/1000}s`)
-    
-    this.reservationRefreshInterval = setInterval(async () => {
-      if (!this.hasRelayReservation()) {
-        console.log(`[Relay] No reservation detected, refreshing...`)
-        await this.refreshRelayReservation()
-      } else {
-        // Proactively refresh even if we think we have one (they can silently expire)
-        console.log(`[Relay] Proactive reservation refresh...`)
-        await this.refreshRelayReservation()
-      }
-    }, intervalMs)
+  // Legacy aliases for backward compatibility
+  startReservationRefresh(intervalMs?: number): void {
+    this.startRelayConnectionMaintenance(intervalMs)
   }
-
-  /**
-   * Stop reservation refresh
-   */
+  
   stopReservationRefresh(): void {
-    if (this.reservationRefreshInterval) {
-      clearInterval(this.reservationRefreshInterval)
-      this.reservationRefreshInterval = null
-    }
+    this.stopRelayConnectionMaintenance()
   }
 
   async start(): Promise<void> {
@@ -259,7 +317,9 @@ export class P2PNode extends EventEmitter {
       transports: [
         tcp(),
         circuitRelayTransport({
-          discoverRelays: 1  // Automatically request reservation from discovered relays
+          // Default options - libp2p handles relay discovery and reservation automatically
+          // when we dial a relay peer and have '/p2p-circuit' in our listen addresses
+          reservationCompletionTimeout: 10_000
         })
       ],
       connectionEncrypters: [noise()],
@@ -303,7 +363,7 @@ export class P2PNode extends EventEmitter {
       this.announcementInterval = null
     }
     
-    this.stopReservationRefresh()
+    this.stopRelayConnectionMaintenance()
 
     if (this.node) {
       await this.node.stop()
@@ -326,13 +386,49 @@ export class P2PNode extends EventEmitter {
       const peerId = evt.detail.toString()
       console.log(`Connected to peer: ${peerId}`)
       this.emit('peer:connected', peerId)
+      
+      // Log when we connect to relay
+      if (peerId === P2PNode.RELAY_PEER_ID) {
+        console.log(`[Relay] 🔌 Connected to relay server`)
+      }
     })
 
-    // Peer disconnection
+    // Peer disconnection - CRITICAL for relay health
     this.node.addEventListener('peer:disconnect', (evt) => {
       const peerId = evt.detail.toString()
       console.log(`Disconnected from peer: ${peerId}`)
       this.emit('peer:disconnected', peerId)
+      
+      // If relay disconnected, trigger immediate reconnection
+      // Don't wait for the maintenance loop - this is time-critical
+      if (peerId === P2PNode.RELAY_PEER_ID) {
+        console.warn(`[Relay] ⚠️ DISCONNECTED from relay server! Reservation is now INVALID.`)
+        
+        // Immediate reconnection attempt (don't block the event handler)
+        setImmediate(async () => {
+          console.log(`[Relay] Attempting immediate reconnection...`)
+          try {
+            await this.dialRelay(RELAY_ADDR)
+            // Wait for reservation
+            const success = await this.waitForReservation(10_000)
+            if (success) {
+              console.log(`[Relay] ✅ Reconnected and reservation restored`)
+            } else {
+              console.error(`[Relay] ⚠️ Reconnected but reservation not restored`)
+            }
+          } catch (err: any) {
+            console.error(`[Relay] ❌ Immediate reconnection failed: ${err.message}`)
+            // The maintenance loop will retry
+          }
+        })
+      }
+    })
+    
+    // Listen for address changes (can indicate reservation changes)
+    this.node.addEventListener('self:peer:update', (evt) => {
+      const addrs = this.multiaddrs
+      const relayAddrs = addrs.filter(a => a.includes('p2p-circuit'))
+      console.log(`[Node] Address update: ${addrs.length} addrs, ${relayAddrs.length} relay`)
     })
   }
 

@@ -169,13 +169,26 @@ class DaemonHealthMonitor {
       errors.push('Node not started')
     }
     
-    // Get multiaddrs and check for relay
+    // PRIMARY CHECK: Are we connected to the relay server?
+    // Per circuit-v2 spec, reservation is only valid while connection is maintained.
+    const relayPeerId = '12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
+    const connections = this.node.getConnections()
+    const relayConnection = connections.find(c => c.remotePeer.toString() === relayPeerId)
+    const relayConnected = !!relayConnection
+    
+    if (!relayConnected) {
+      errors.push('Not connected to relay server (reservation INVALID)')
+    }
+    
+    // SECONDARY CHECK: Do we have relay addresses in our multiaddrs?
+    // This can lag behind the actual connection state.
     const addrs = this.node.multiaddrs
     const relayAddrs = addrs.filter(a => a.includes('p2p-circuit') && a.includes('167.172.134.84'))
     const hasRelayReservation = relayAddrs.length > 0
     
-    if (!hasRelayReservation) {
-      errors.push('No relay reservation')
+    if (!hasRelayReservation && relayConnected) {
+      // Connected but no address yet - may still be establishing reservation
+      log('DEBUG', 'HEALTH', 'Connected to relay but reservation not yet visible')
     }
     
     // Check if relay address changed (might indicate reconnection)
@@ -184,15 +197,6 @@ class DaemonHealthMonitor {
       log('INFO', 'HEALTH', 'Relay address changed', { old: this.lastRelayAddr, new: currentRelayAddr })
     }
     this.lastRelayAddr = currentRelayAddr
-    
-    // Check relay peer connection
-    const relayPeerId = '12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
-    const connections = this.node.getConnections()
-    const relayConnected = connections.some(c => c.remotePeer.toString() === relayPeerId)
-    
-    if (!relayConnected) {
-      errors.push('Not connected to relay server')
-    }
     
     return {
       isHealthy: errors.length === 0,
@@ -353,9 +357,11 @@ async function main(): Promise<void> {
     healthMonitor = new DaemonHealthMonitor(node, config)
     await healthMonitor.start()
     
-    // Start reservation refresh (every 2 minutes to prevent silent expiration)
-    node.startReservationRefresh(120000)
-    log('INFO', 'STARTUP', 'Relay reservation refresh started (every 2m)')
+    // Start relay connection maintenance (every 10 seconds to detect disconnections quickly)
+    // NOTE: We no longer "refresh" reservations by closing connections - that was the bug!
+    // Instead, we maintain the connection, and libp2p handles reservation refresh internally.
+    node.startRelayConnectionMaintenance(10_000)
+    log('INFO', 'STARTUP', 'Relay connection maintenance started (check every 10s)')
     
     // Set up event logging
     node.on('peer:connected', (peerId) => {

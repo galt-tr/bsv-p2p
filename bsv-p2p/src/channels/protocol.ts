@@ -494,4 +494,11 @@ export class ChannelProtocol extends EventEmitter {
   getChannelByPeer(peerId: string): Channel | undefined {
     return this.manager.getChannelsByPeer(peerId).find(c => c.state === 'open')
   }
+  
+  /**
+   * Get all channels
+   */
+  getChannels(): Channel[] {
+    return this.manager.getAllChannels()
+  }
 }

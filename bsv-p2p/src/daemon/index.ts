@@ -495,6 +495,67 @@ Respond to complete the service.`
         return
       }
       
+      // Channel operations
+      if (req.method === 'POST' && req.url === '/channel/open') {
+        if (!channelProtocol) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Payment channels not enabled (no BSV keys configured)' }))
+          return
+        }
+        
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', async () => {
+          try {
+            const { peerId, remotePubKey, capacity } = JSON.parse(body)
+            if (!peerId || !remotePubKey) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing peerId or remotePubKey' }))
+              return
+            }
+            
+            log('INFO', 'API', `Opening channel with ${peerId.substring(0, 16)}... capacity: ${capacity ?? 10000} sats`)
+            const channel = await channelProtocol.openChannel(peerId, remotePubKey, capacity ?? 10000)
+            
+            res.writeHead(200)
+            res.end(JSON.stringify({ 
+              success: true, 
+              channelId: channel.id,
+              state: channel.state,
+              capacity: channel.capacity
+            }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Channel open failed: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+      
+      if (req.method === 'GET' && req.url === '/channels') {
+        if (!channelProtocol) {
+          res.writeHead(200)
+          res.end(JSON.stringify({ channels: [], enabled: false }))
+          return
+        }
+        
+        const channels = channelProtocol.getChannels()
+        res.writeHead(200)
+        res.end(JSON.stringify({ 
+          channels: channels.map(c => ({
+            id: c.id,
+            remotePeerId: c.remotePeerId,
+            state: c.state,
+            capacity: c.capacity,
+            localBalance: c.localBalance,
+            remoteBalance: c.remoteBalance
+          })),
+          enabled: true
+        }))
+        return
+      }
+      
       res.writeHead(404)
       res.end(JSON.stringify({ error: 'Not found' }))
     })

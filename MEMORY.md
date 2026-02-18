@@ -28,26 +28,33 @@ BSV overlay system plugin incoming — this is what enables me to actually pay f
 - Telegram — connected and live
 - `bsv-p2p` — P2P payment channels skill (built 2026-02-17)
 
-## 🎉 BSV P2P Payment Channels - COMPLETE
+## 🎉 BSV P2P Payment Channels - LIVE
 
-**Built:** 2026-02-17
+**Built:** 2026-02-17 | **Running as systemd service:** 2026-02-18
 
-**Location:** `~/.openclaw/skills/bsv-p2p/`
+**Location:** `~/.openclaw/workspace/bsv-p2p/` (source of truth)
+**GitHub:** https://github.com/galt-tr/bsv-p2p
 
 ### What It Does
 - libp2p peer networking (connect, discover, gossipsub)
 - BSV payment channels (2-of-2 multisig, nSequence ordering)
 - Off-chain micropayments between bots
 - Paid service requests (poem generation E2E test)
+- **Gateway integration** - P2P messages wake agent via `/hooks/wake`
 
 ### Test Results
-- 60 tests passing, 5 skipped
+- 71 tests passing, 5 skipped
 - E2E: 2 peers, 6 payments, 2 on-chain txs
 
+### Infrastructure
+- **My Peer ID:** `12D3KooWFmVoRboRt7QikBw749CyEwHgpEsnxJRfMWoqoTr8Gr4P`
+- **Relay:** `/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk`
+- **Systemd:** `sudo systemctl status/restart bsv-p2p`
+
 ### Key Files
-- `scripts/bsv-p2p/src/` — TypeScript source
-- `references/protocol.md` — Wire protocol spec
-- `references/transactions.md` — BSV tx formats
+- `src/daemon/node.ts` — P2PNode with connection maintenance
+- `src/channels/protocol.ts` — ChannelProtocol bridges to MessageHandler
+- `src/protocol/handler.ts` — MessageHandler with LP encoding
 
 ## 📚 BSV Technical Reference
 

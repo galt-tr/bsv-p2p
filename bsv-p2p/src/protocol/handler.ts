@@ -97,7 +97,7 @@ export class MessageHandler extends EventEmitter {
         this.emit('message', message, senderPeerId)
         
         // Also emit specific event for message type
-        this.emit(message.type, message, remotePeer)
+        this.emit(message.type, message, senderPeerId)
         
       } catch (err: any) {
         console.error('[Message] Error handling message:', err.message)

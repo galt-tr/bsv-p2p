@@ -501,4 +501,86 @@ export class ChannelProtocol extends EventEmitter {
   getChannels(): Channel[] {
     return this.manager.getAllChannels()
   }
+
+  // ============================================================
+  // Real BSV Transaction Methods
+  // ============================================================
+
+  /**
+   * Fund a channel with a real UTXO
+   * 
+   * @param channelId - The channel to fund
+   * @param utxo - The UTXO to spend  
+   * @param fee - Transaction fee in satoshis
+   * @returns The funding transaction ID
+   */
+  async fundChannel(
+    channelId: string,
+    utxo: {
+      txid: string
+      vout: number
+      satoshis: number
+      scriptPubKey: string
+    },
+    fee: number = 200
+  ): Promise<string> {
+    return await this.manager.fundChannelWithUTXO(channelId, utxo, fee)
+  }
+
+  /**
+   * Verify funding transaction with SPV and open the channel
+   * 
+   * @param channelId - The channel to verify and open
+   * @returns true if verified and opened, false if not confirmed yet
+   */
+  async verifyAndOpenChannel(channelId: string): Promise<boolean> {
+    const channel = this.manager.getChannel(channelId)
+    if (!channel) throw new Error(`Channel ${channelId} not found`)
+    if (channel.state !== 'pending') {
+      throw new Error(`Channel already in state ${channel.state}`)
+    }
+    
+    // Verify funding transaction
+    const verified = await this.manager.verifyFundingTx(channelId)
+    
+    if (verified) {
+      // Open the channel
+      this.manager.openChannel(channelId)
+      this.emit('channel:opened', channel)
+      this.onChannelReady?.(channel)
+      return true
+    }
+    
+    return false
+  }
+
+  /**
+   * Send a signed payment through a channel
+   * Uses real commitment transaction signatures
+   */
+  async payWithSignature(channelId: string, amount: number): Promise<ChannelPayment> {
+    const channel = this.manager.getChannel(channelId)
+    if (!channel) throw new Error(`Channel ${channelId} not found`)
+    if (channel.state !== 'open') throw new Error(`Channel not open`)
+    
+    // Create signed payment
+    const payment = await this.manager.createSignedPayment(channelId, amount)
+    
+    // Send CHANNEL_UPDATE
+    const updateMsg: ChannelUpdateMessage = {
+      ...createBaseMessage(MessageType.CHANNEL_UPDATE, this.peerId, channel.remotePeerId),
+      type: MessageType.CHANNEL_UPDATE,
+      channelId,
+      sequence: payment.newSequenceNumber,
+      ourBalance: payment.newLocalBalance,
+      theirBalance: payment.newRemoteBalance,
+      commitmentTxHex: '', // Full tx would be here for transparency
+      signature: payment.signature
+    }
+    
+    await this.handler.send(channel.remotePeerId, updateMsg)
+    console.log(`[Channel] Sent signed payment of ${amount} sats (seq: ${payment.newSequenceNumber})`)
+    
+    return payment
+  }
 }

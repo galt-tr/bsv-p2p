@@ -263,4 +263,48 @@ describe('ChannelManager', () => {
       expect(total).toBe(27000)
     })
   })
+
+  describe('real BSV transactions', () => {
+    let fundingManager: ChannelManager
+    let channel: Channel
+    
+    beforeEach(async () => {
+      fundingManager = new ChannelManager({
+        privateKey: testPrivateKey,
+        publicKey: testPublicKey,
+        dbPath: ':memory:'
+      })
+      
+      channel = await fundingManager.createChannel('peer1', remotePubKey, 10000)
+    })
+
+    it('should reject funding non-pending channel', async () => {
+      // First, mark channel as open
+      fundingManager.setFundingTx(channel.id, 'fake-txid', 0)
+      fundingManager.openChannel(channel.id)
+      
+      await expect(
+        fundingManager.fundChannelWithUTXO(channel.id, {
+          txid: 'test',
+          vout: 0,
+          satoshis: 15000,
+          scriptPubKey: '76a914...'
+        })
+      ).rejects.toThrow('Cannot fund channel in state open')
+    })
+
+    it('should require funding tx for signed payments', async () => {
+      // Open channel without funding tx
+      fundingManager.setFundingTx(channel.id, 'fake-txid', 0)
+      fundingManager.openChannel(channel.id)
+      
+      // Remove the funding tx id to simulate missing funding
+      const ch = fundingManager.getChannel(channel.id)!
+      ch.fundingTxId = undefined
+      
+      await expect(
+        fundingManager.createSignedPayment(channel.id, 1000)
+      ).rejects.toThrow('no funding transaction')
+    })
+  })
 })

@@ -533,6 +533,97 @@ Respond to complete the service.`
         return
       }
       
+      // Fund a channel with a real UTXO
+      if (req.method === 'POST' && req.url === '/channel/fund') {
+        if (!channelProtocol) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Payment channels not enabled (no BSV keys configured)' }))
+          return
+        }
+        
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', async () => {
+          try {
+            const { channelId, utxo, fee } = JSON.parse(body)
+            if (!channelId || !utxo) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing channelId or utxo' }))
+              return
+            }
+            
+            if (!utxo.txid || utxo.vout === undefined || !utxo.satoshis || !utxo.scriptPubKey) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'UTXO must have txid, vout, satoshis, and scriptPubKey' }))
+              return
+            }
+            
+            log('INFO', 'API', `Funding channel ${channelId.substring(0, 8)}... with UTXO ${utxo.txid.substring(0, 8)}:${utxo.vout}`)
+            const fundingTxId = await channelProtocol.fundChannel(channelId, utxo, fee ?? 200)
+            
+            res.writeHead(200)
+            res.end(JSON.stringify({ 
+              success: true, 
+              channelId,
+              fundingTxId,
+              message: 'Channel funded. Wait for confirmation before opening.'
+            }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Channel funding failed: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+      
+      // Verify and open a funded channel
+      if (req.method === 'POST' && req.url === '/channel/verify-open') {
+        if (!channelProtocol) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Payment channels not enabled' }))
+          return
+        }
+        
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', async () => {
+          try {
+            const { channelId } = JSON.parse(body)
+            if (!channelId) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing channelId' }))
+              return
+            }
+            
+            log('INFO', 'API', `Verifying and opening channel ${channelId.substring(0, 8)}...`)
+            const verified = await channelProtocol.verifyAndOpenChannel(channelId)
+            
+            if (verified) {
+              res.writeHead(200)
+              res.end(JSON.stringify({ 
+                success: true, 
+                channelId,
+                state: 'open',
+                message: 'Channel verified with SPV and opened.'
+              }))
+            } else {
+              res.writeHead(400)
+              res.end(JSON.stringify({ 
+                success: false,
+                channelId,
+                message: 'Funding transaction not confirmed yet. Try again later.'
+              }))
+            }
+          } catch (err: any) {
+            log('ERROR', 'API', `Channel verify/open failed: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+      
       if (req.method === 'GET' && req.url === '/channels') {
         if (!channelProtocol) {
           res.writeHead(200)
@@ -549,7 +640,8 @@ Respond to complete the service.`
             state: c.state,
             capacity: c.capacity,
             localBalance: c.localBalance,
-            remoteBalance: c.remoteBalance
+            remoteBalance: c.remoteBalance,
+            fundingTxId: c.fundingTxId
           })),
           enabled: true
         }))

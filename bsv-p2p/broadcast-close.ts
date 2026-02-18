@@ -22,7 +22,7 @@ async function main() {
   
   // Signatures (in order: first key in multisig, then second)
   const mySigHex = '3044022005272026e5f94c13c63773cbb80c986a72c937fa0b1d40ede58b3b5aecc3a79902204e5e7d1884dbc7a041e5ce321fbb22149421104e6019d6f5ed1c01493327404a41'
-  const moneoSigHex = '3045022100f4abc5e5c9b75f58c7c5daa459ad70427b94b8d374dc1d6e42704e47f730c78a02202bf3617042694eda4542f6a8b57e0837589965e1833af46efa60607c24421baf41'
+  const moneoSigHex = '304402203a93ba801ef94ca0f575e148648439dca874b402153326f4a74a8eef8db61064022034168337ea4fe4eda5cfbefa09bbcb5abd3e4b641b99bb6708e03db81867f43941'
   
   const mySig = Array.from(Buffer.from(mySigHex, 'hex'))
   const moneoSig = Array.from(Buffer.from(moneoSigHex, 'hex'))

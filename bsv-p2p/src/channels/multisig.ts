@@ -12,7 +12,9 @@ import {
   LockingScript,
   UnlockingScript,
   OP,
-  Hash
+  Hash,
+  P2PKH,
+  Signature
 } from '@bsv/sdk'
 
 const { sha256 } = Hash
@@ -176,10 +178,8 @@ export function verifySignature(
   // Parse DER signature (remove sighash type byte)
   const derSig = signature.slice(0, -1)
   
-  // Verify - need to reconstruct the signature object
-  // The SDK's verify expects Signature objects, so we verify manually
+  // Verify - reconstruct the signature object
   try {
-    const { Signature } = require('@bsv/sdk')
     const sig = Signature.fromDER(derSig)
     return publicKey.verify(sighash, sig)
   } catch (err) {
@@ -220,7 +220,6 @@ export async function createFundingTransaction(params: FundingTxParams): Promise
   const tx = new Transaction()
   
   // Add input (spending from P2PKH)
-  const { P2PKH, LockingScript: LS } = require('@bsv/sdk')
   const p2pkh = new P2PKH()
   
   // Create a minimal source tx for the SDK
@@ -228,7 +227,7 @@ export async function createFundingTransaction(params: FundingTxParams): Promise
   sourceTx.outputs = Array(utxo.vout + 1).fill(null)
   sourceTx.outputs[utxo.vout] = {
     satoshis: utxo.satoshis,
-    lockingScript: LS.fromHex(utxo.scriptPubKey)
+    lockingScript: LockingScript.fromHex(utxo.scriptPubKey)
   }
   
   tx.addInput({
@@ -323,7 +322,6 @@ export function createCommitmentTransaction(params: CommitmentTxParams): Transac
   tx.lockTime = lockTime
   
   // Add outputs for each party (if non-zero)
-  const { P2PKH } = require('@bsv/sdk')
   const p2pkh = new P2PKH()
   
   if (localBalance > 0) {

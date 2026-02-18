@@ -23,9 +23,14 @@ import {
   ChannelCloseMessage,
   PaidRequestMessage,
   PaidResultMessage,
+  CloseRequestMessage,
+  CloseAcceptMessage,
+  CloseCompleteMessage,
   createBaseMessage,
   createMessageId
 } from '../protocol/messages.js'
+import { PrivateKey, PublicKey } from '@bsv/sdk'
+import { createCloseRequest, signCloseRequest, broadcastClose, CloseRequest } from './close.js'
 
 export interface ChannelProtocolConfig {
   channelManager: ChannelManager
@@ -79,7 +84,14 @@ export class ChannelProtocol extends EventEmitter {
     this.handler.on(MessageType.CHANNEL_UPDATE, this.handleChannelUpdate.bind(this))
     this.handler.on(MessageType.CHANNEL_CLOSE, this.handleChannelClose.bind(this))
     this.handler.on(MessageType.PAID_REQUEST, this.handlePaidRequest.bind(this))
+    // Cooperative close protocol
+    this.handler.on(MessageType.CLOSE_REQUEST, this.handleCloseRequest.bind(this))
+    this.handler.on(MessageType.CLOSE_ACCEPT, this.handleCloseAccept.bind(this))
+    this.handler.on(MessageType.CLOSE_COMPLETE, this.handleCloseComplete.bind(this))
   }
+  
+  // Track pending close requests
+  private pendingCloseRequests: Map<string, CloseRequest> = new Map()
   
   /**
    * Open a new payment channel with a peer
@@ -582,5 +594,172 @@ export class ChannelProtocol extends EventEmitter {
     console.log(`[Channel] Sent signed payment of ${amount} sats (seq: ${payment.newSequenceNumber})`)
     
     return payment
+  }
+
+  // ============================================================
+  // Cooperative Close Protocol
+  // ============================================================
+
+  /**
+   * Initiate cooperative close of a channel
+   * Creates close request, signs it, and sends to counterparty
+   */
+  async initiateCooperativeClose(
+    channelId: string,
+    privateKeyHex: string
+  ): Promise<CloseRequest> {
+    const channel = this.manager.getChannel(channelId)
+    if (!channel) throw new Error(`Channel ${channelId} not found`)
+    if (!channel.fundingTxId) throw new Error('Channel has no funding transaction')
+    
+    const privateKey = PrivateKey.fromHex(privateKeyHex)
+    const localPubKey = PublicKey.fromString(channel.localPubKey)
+    const remotePubKey = PublicKey.fromString(channel.remotePubKey)
+    
+    console.log(`[Close] Initiating cooperative close for channel ${channelId.substring(0, 8)}...`)
+    console.log(`[Close] Local balance: ${channel.localBalance}, Remote balance: ${channel.remoteBalance}`)
+    
+    // Create close request
+    const closeRequest = await createCloseRequest({
+      channelId,
+      fundingTxId: channel.fundingTxId.trim(),
+      fundingVout: channel.fundingOutputIndex ?? 0,
+      capacity: channel.capacity,
+      localBalance: channel.localBalance,
+      remoteBalance: channel.remoteBalance,
+      localPrivateKey: privateKey,
+      localPubKey,
+      remotePubKey
+    })
+    
+    // Store for when we receive the accept
+    this.pendingCloseRequests.set(channelId, closeRequest)
+    
+    // Send to counterparty
+    const msg: CloseRequestMessage = {
+      ...createBaseMessage(MessageType.CLOSE_REQUEST, this.peerId, channel.remotePeerId),
+      type: MessageType.CLOSE_REQUEST,
+      ...closeRequest
+    }
+    
+    await this.handler.send(channel.remotePeerId, msg)
+    console.log(`[Close] Sent CLOSE_REQUEST to ${channel.remotePeerId.substring(0, 16)}...`)
+    
+    // Update channel state
+    this.manager.closeChannel(channelId)
+    
+    return closeRequest
+  }
+
+  /**
+   * Handle incoming CLOSE_REQUEST (responder side)
+   */
+  private async handleCloseRequest(msg: CloseRequestMessage, remotePeerId: string): Promise<void> {
+    console.log(`[Close] Received CLOSE_REQUEST for channel ${msg.channelId.substring(0, 8)}...`)
+    console.log(`[Close] Initiator balance: ${msg.initiatorBalance}, Responder balance: ${msg.responderBalance}`)
+    
+    const channel = this.manager.getChannel(msg.channelId)
+    if (!channel) {
+      console.warn(`[Close] Unknown channel ${msg.channelId}`)
+      return
+    }
+    
+    // Get our private key from manager config
+    const privateKeyHex = (this.manager as any).privateKey
+    if (!privateKeyHex) {
+      console.error('[Close] No private key available')
+      return
+    }
+    
+    const privateKey = PrivateKey.fromHex(privateKeyHex)
+    
+    try {
+      // Sign the close request
+      const closeRequest: CloseRequest = {
+        channelId: msg.channelId,
+        fundingTxId: msg.fundingTxId,
+        fundingVout: msg.fundingVout,
+        capacity: msg.capacity,
+        initiatorBalance: msg.initiatorBalance,
+        responderBalance: msg.responderBalance,
+        fee: msg.fee,
+        closingTxHex: '',
+        initiatorSignature: msg.initiatorSignature,
+        initiatorPubKey: msg.initiatorPubKey,
+        responderPubKey: msg.responderPubKey
+      }
+      
+      const closeAccept = await signCloseRequest(closeRequest, privateKey)
+      
+      // Send accept back
+      const acceptMsg: CloseAcceptMessage = {
+        ...createBaseMessage(MessageType.CLOSE_ACCEPT, this.peerId, remotePeerId),
+        type: MessageType.CLOSE_ACCEPT,
+        channelId: msg.channelId,
+        responderSignature: closeAccept.responderSignature
+      }
+      
+      await this.handler.send(remotePeerId, acceptMsg)
+      console.log(`[Close] Sent CLOSE_ACCEPT with signature`)
+      
+      // Update channel state
+      this.manager.closeChannel(msg.channelId)
+    } catch (err: any) {
+      console.error(`[Close] Failed to sign close request: ${err.message}`)
+    }
+  }
+
+  /**
+   * Handle incoming CLOSE_ACCEPT (initiator side)
+   */
+  private async handleCloseAccept(msg: CloseAcceptMessage, remotePeerId: string): Promise<void> {
+    console.log(`[Close] Received CLOSE_ACCEPT for channel ${msg.channelId.substring(0, 8)}...`)
+    
+    const closeRequest = this.pendingCloseRequests.get(msg.channelId)
+    if (!closeRequest) {
+      console.warn(`[Close] No pending close request for channel ${msg.channelId}`)
+      return
+    }
+    
+    try {
+      // Broadcast the closing transaction
+      const closingTxId = await broadcastClose(closeRequest, {
+        channelId: msg.channelId,
+        responderSignature: msg.responderSignature
+      })
+      
+      console.log(`[Close] 🎉 BROADCAST SUCCESS! TXID: ${closingTxId}`)
+      
+      // Send completion message
+      const completeMsg: CloseCompleteMessage = {
+        ...createBaseMessage(MessageType.CLOSE_COMPLETE, this.peerId, remotePeerId),
+        type: MessageType.CLOSE_COMPLETE,
+        channelId: msg.channelId,
+        closingTxId
+      }
+      
+      await this.handler.send(remotePeerId, completeMsg)
+      
+      // Finalize close
+      this.manager.finalizeClose(msg.channelId, closingTxId)
+      this.pendingCloseRequests.delete(msg.channelId)
+      
+      this.emit('channel:closed', { channelId: msg.channelId, closingTxId })
+    } catch (err: any) {
+      console.error(`[Close] Broadcast failed: ${err.message}`)
+    }
+  }
+
+  /**
+   * Handle incoming CLOSE_COMPLETE (responder side)
+   */
+  private async handleCloseComplete(msg: CloseCompleteMessage, remotePeerId: string): Promise<void> {
+    console.log(`[Close] Received CLOSE_COMPLETE for channel ${msg.channelId.substring(0, 8)}...`)
+    console.log(`[Close] 🎉 Closing TXID: ${msg.closingTxId}`)
+    
+    // Finalize close
+    this.manager.finalizeClose(msg.channelId, msg.closingTxId)
+    
+    this.emit('channel:closed', { channelId: msg.channelId, closingTxId: msg.closingTxId })
   }
 }

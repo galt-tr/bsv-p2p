@@ -34,7 +34,12 @@ export enum MessageType {
   
   // Direct payments (not through channels)
   PAYMENT = 'payment',
-  PAYMENT_ACK = 'payment:ack'
+  PAYMENT_ACK = 'payment:ack',
+  
+  // Cooperative close protocol
+  CLOSE_REQUEST = 'close:request',
+  CLOSE_ACCEPT = 'close:accept',
+  CLOSE_COMPLETE = 'close:complete'
 }
 
 // Base message structure
@@ -183,6 +188,35 @@ export interface PaymentAckMessage extends BaseMessage {
   balance?: number       // Our new balance (optional)
 }
 
+// Cooperative close request - initiator sends signed close tx
+export interface CloseRequestMessage extends BaseMessage {
+  type: MessageType.CLOSE_REQUEST
+  channelId: string
+  fundingTxId: string
+  fundingVout: number
+  capacity: number
+  initiatorBalance: number
+  responderBalance: number
+  fee: number
+  initiatorSignature: string
+  initiatorPubKey: string
+  responderPubKey: string
+}
+
+// Cooperative close accept - responder sends their signature
+export interface CloseAcceptMessage extends BaseMessage {
+  type: MessageType.CLOSE_ACCEPT
+  channelId: string
+  responderSignature: string
+}
+
+// Close complete - initiator confirms broadcast
+export interface CloseCompleteMessage extends BaseMessage {
+  type: MessageType.CLOSE_COMPLETE
+  channelId: string
+  closingTxId: string
+}
+
 // Union type for all messages
 export type Message = 
   | TextMessage
@@ -199,6 +233,9 @@ export type Message =
   | PaidResultMessage
   | PaymentMessage
   | PaymentAckMessage
+  | CloseRequestMessage
+  | CloseAcceptMessage
+  | CloseCompleteMessage
 
 // Helper to create message IDs
 export function createMessageId(): string {

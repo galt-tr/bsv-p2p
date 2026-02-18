@@ -748,6 +748,46 @@ ${msg.memo ? `Memo: ${msg.memo}` : ''}`
         return
       }
       
+      // Cooperative close a channel
+      if (req.method === 'POST' && req.url === '/channel/close') {
+        if (!channelProtocol) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Payment channels not enabled' }))
+          return
+        }
+        
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', async () => {
+          try {
+            const { channelId } = JSON.parse(body)
+            if (!channelId) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing channelId' }))
+              return
+            }
+            
+            log('INFO', 'API', `Initiating cooperative close for channel ${channelId.substring(0, 8)}...`)
+            const closeRequest = await channelProtocol.initiateCooperativeClose(channelId, config.bsvPrivateKey!)
+            
+            res.writeHead(200)
+            res.end(JSON.stringify({ 
+              success: true,
+              channelId,
+              message: 'Close request sent to counterparty. Waiting for signature...',
+              initiatorBalance: closeRequest.initiatorBalance,
+              responderBalance: closeRequest.responderBalance,
+              fee: closeRequest.fee
+            }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Close failed: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+      
       // ============================================================
       // Wallet Endpoints
       // ============================================================

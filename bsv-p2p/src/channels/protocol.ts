@@ -611,6 +611,7 @@ export class ChannelProtocol extends EventEmitter {
     const channel = this.manager.getChannel(channelId)
     if (!channel) throw new Error(`Channel ${channelId} not found`)
     if (!channel.fundingTxId) throw new Error('Channel has no funding transaction')
+    if (channel.state === 'closed') throw new Error('Channel already closed')
     
     const privateKey = PrivateKey.fromHex(privateKeyHex)
     const localPubKey = PublicKey.fromString(channel.localPubKey)
@@ -645,8 +646,14 @@ export class ChannelProtocol extends EventEmitter {
     await this.handler.send(channel.remotePeerId, msg)
     console.log(`[Close] Sent CLOSE_REQUEST to ${channel.remotePeerId.substring(0, 16)}...`)
     
-    // Update channel state
-    this.manager.closeChannel(channelId)
+    // Update channel state (only if open, pending channels go straight to closing)
+    if (channel.state === 'open') {
+      try {
+        this.manager.closeChannel(channelId)
+      } catch (err) {
+        // Ignore - might already be closing
+      }
+    }
     
     return closeRequest
   }
@@ -702,8 +709,14 @@ export class ChannelProtocol extends EventEmitter {
       await this.handler.send(remotePeerId, acceptMsg)
       console.log(`[Close] Sent CLOSE_ACCEPT with signature`)
       
-      // Update channel state
-      this.manager.closeChannel(msg.channelId)
+      // Update channel state (if open)
+      if (channel.state === 'open') {
+        try {
+          this.manager.closeChannel(msg.channelId)
+        } catch (err) {
+          // Ignore
+        }
+      }
     } catch (err: any) {
       console.error(`[Close] Failed to sign close request: ${err.message}`)
     }

@@ -1,5 +1,6 @@
 export * from './types.js'
 export * from './manager.js'
+export * from './storage.js'
 export * from './transactions.js'
 export * from './wire.js'
 export * from './protocol.js'

@@ -19,8 +19,10 @@ import {
   ChannelCloseRequest,
   CommitmentTransaction,
   ChannelMessage,
+  PaymentRecord,
   DEFAULT_CHANNEL_CONFIG
 } from './types.js'
+import { ChannelStorage } from './storage.js'
 
 export interface ChannelManagerConfig extends Partial<ChannelConfig> {
   /** Our BSV private key (hex) for signing */
@@ -29,6 +31,8 @@ export interface ChannelManagerConfig extends Partial<ChannelConfig> {
   publicKey: string
   /** Callback to broadcast transactions */
   broadcastTx?: (rawTx: string) => Promise<string>
+  /** Database path for persistence (default: ~/.bsv-p2p/channels.db) */
+  dbPath?: string
 }
 
 export class ChannelManager extends EventEmitter {
@@ -36,6 +40,7 @@ export class ChannelManager extends EventEmitter {
   private privateKey: string
   private publicKey: string
   private channels: Map<string, Channel> = new Map()
+  private storage: ChannelStorage
   private broadcastTx?: (rawTx: string) => Promise<string>
 
   constructor(managerConfig: ChannelManagerConfig) {
@@ -47,6 +52,46 @@ export class ChannelManager extends EventEmitter {
       ...DEFAULT_CHANNEL_CONFIG,
       ...managerConfig
     }
+    
+    // Initialize storage
+    this.storage = new ChannelStorage(managerConfig.dbPath)
+    
+    // Load existing channels from database
+    this.loadChannels()
+  }
+  
+  /**
+   * Load channels from persistent storage
+   */
+  private loadChannels(): void {
+    const channels = this.storage.getAllChannels()
+    for (const channel of channels) {
+      this.channels.set(channel.id, channel)
+    }
+    console.log(`[ChannelManager] Loaded ${channels.length} channels from database`)
+  }
+  
+  /**
+   * Save a channel to persistent storage
+   */
+  private saveChannel(channel: Channel): void {
+    this.storage.saveChannel(channel)
+  }
+  
+  /**
+   * Record a payment in the database
+   */
+  private recordPayment(channelId: string, amount: number, direction: 'sent' | 'received', sequence: number, signature?: string): void {
+    const record: PaymentRecord = {
+      id: uuid(),
+      channelId,
+      amount,
+      direction,
+      sequence,
+      signature,
+      timestamp: Date.now()
+    }
+    this.storage.recordPayment(record)
   }
 
   /**
@@ -89,6 +134,7 @@ export class ChannelManager extends EventEmitter {
     }
 
     this.channels.set(channel.id, channel)
+    this.saveChannel(channel)
     this.emit('channel:created', channel)
     
     return channel
@@ -124,6 +170,7 @@ export class ChannelManager extends EventEmitter {
     }
 
     this.channels.set(channel.id, channel)
+    this.saveChannel(channel)
     this.emit('channel:accepted', channel)
     
     return channel
@@ -139,6 +186,7 @@ export class ChannelManager extends EventEmitter {
     channel.fundingTxId = txId
     channel.fundingOutputIndex = outputIndex
     channel.updatedAt = Date.now()
+    this.saveChannel(channel)
   }
 
   /**
@@ -153,6 +201,7 @@ export class ChannelManager extends EventEmitter {
     
     channel.state = 'open'
     channel.updatedAt = Date.now()
+    this.saveChannel(channel)
     this.emit('channel:opened', channel)
   }
 
@@ -185,7 +234,9 @@ export class ChannelManager extends EventEmitter {
     channel.remoteBalance = payment.newLocalBalance  // Their local is our remote
     channel.sequenceNumber = payment.newSequenceNumber
     channel.updatedAt = Date.now()
-
+    
+    this.saveChannel(channel)
+    this.recordPayment(channel.id, payment.amount, 'received', payment.newSequenceNumber, payment.signature)
     this.emit('channel:payment_received', { channel, payment })
   }
 
@@ -226,7 +277,9 @@ export class ChannelManager extends EventEmitter {
     channel.remoteBalance = newRemoteBalance
     channel.sequenceNumber = newSequenceNumber
     channel.updatedAt = Date.now()
-
+    
+    this.saveChannel(channel)
+    this.recordPayment(channelId, amount, 'sent', newSequenceNumber, signature)
     this.emit('channel:payment_sent', { channel, payment })
     
     return payment
@@ -244,6 +297,7 @@ export class ChannelManager extends EventEmitter {
 
     channel.state = 'closing'
     channel.updatedAt = Date.now()
+    this.saveChannel(channel)
 
     // TODO: Sign close request
     const signature = '' // Placeholder
@@ -271,8 +325,16 @@ export class ChannelManager extends EventEmitter {
     
     channel.state = 'closed'
     channel.updatedAt = Date.now()
+    this.saveChannel(channel)
     
     this.emit('channel:closed', { channel, closeTxId })
+  }
+  
+  /**
+   * Get payment history for a channel
+   */
+  getPaymentHistory(channelId: string): PaymentRecord[] {
+    return this.storage.getPayments(channelId)
   }
 
   /**

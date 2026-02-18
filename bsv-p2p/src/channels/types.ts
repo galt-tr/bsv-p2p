@@ -192,3 +192,29 @@ export interface ChannelMessage {
   timestamp: number
   signature?: string
 }
+
+/**
+ * Payment record for audit/history tracking
+ */
+export interface PaymentRecord {
+  /** Unique payment ID */
+  id: string
+  
+  /** Channel ID */
+  channelId: string
+  
+  /** Amount in satoshis */
+  amount: number
+  
+  /** Direction: sent or received */
+  direction: 'sent' | 'received'
+  
+  /** Sequence number at time of payment */
+  sequence: number
+  
+  /** Signature (if available) */
+  signature?: string
+  
+  /** Timestamp */
+  timestamp: number
+}

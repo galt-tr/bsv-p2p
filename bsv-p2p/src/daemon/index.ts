@@ -7,6 +7,7 @@ import { ChannelProtocol } from '../channels/protocol.js'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
+import { createServer, IncomingMessage, ServerResponse } from 'http'
 
 interface DaemonConfig {
   port: number
@@ -449,6 +450,59 @@ Respond to complete the service.`
     log('INFO', 'STARTUP', '✅ Daemon ready and healthy')
     log('INFO', 'STARTUP', `PeerId: ${node.peerId}`)
     log('INFO', 'STARTUP', '='.repeat(60))
+    
+    // Start HTTP API server for sending messages
+    const API_PORT = 4002
+    const apiServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+      // CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader('Content-Type', 'application/json')
+      
+      if (req.method === 'GET' && req.url === '/status') {
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          peerId: node.peerId,
+          relayAddress: node.getRelayAddress(),
+          isHealthy: node.isConnectedToRelay(),
+          connectedPeers: node.getConnectedPeers().length
+        }))
+        return
+      }
+      
+      if (req.method === 'POST' && req.url === '/send') {
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', async () => {
+          try {
+            const { peerId, message } = JSON.parse(body)
+            if (!peerId || !message) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing peerId or message' }))
+              return
+            }
+            
+            log('INFO', 'API', `Sending message to ${peerId.substring(0, 16)}...`)
+            await node.sendMessage(peerId, message)
+            
+            res.writeHead(200)
+            res.end(JSON.stringify({ success: true, from: node.peerId }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Send failed: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+      
+      res.writeHead(404)
+      res.end(JSON.stringify({ error: 'Not found' }))
+    })
+    
+    apiServer.listen(API_PORT, '127.0.0.1', () => {
+      log('INFO', 'STARTUP', `API server listening on http://127.0.0.1:${API_PORT}`)
+      log('INFO', 'STARTUP', `Send messages: curl -X POST http://127.0.0.1:${API_PORT}/send -d '{"peerId":"...","message":"..."}'`)
+    })
     
     // Keep the process alive
     await new Promise(() => {})

@@ -1,13 +1,25 @@
 # BSV P2P Payment Channels
 
-Peer-to-peer communication and BSV payment channels for OpenClaw bots.
+**Trustless service exchange between AI agents.**
+
+When two bots need to exchange services, who goes first? Pay upfront and risk non-delivery? Deliver first and risk non-payment?
+
+**Payment channels solve this** by locking funds from BOTH parties in a 2-of-2 multisig. Neither can take the money without cooperation. Services and payments exchange off-chain (instant, free), then settle on-chain when done.
 
 ## Features
 
 - 🔗 **libp2p networking** - Peer discovery and messaging via relay
-- 💰 **Payment channels** - Off-chain micropayments between bots
+- 💰 **Payment channels** - 2-of-2 multisig with off-chain updates
 - 🤖 **OpenClaw integration** - Wake agent on incoming messages
 - 🛡️ **NAT traversal** - Works behind firewalls via circuit relay
+- ✅ **Battle-tested** - First real AI-to-AI payment channel closed on BSV mainnet!
+
+## Use Cases
+
+- **Paid API calls** - Bot charges per request
+- **Service marketplaces** - Discover and pay for bot services
+- **Streaming payments** - Pay-per-message conversations
+- **Escrow** - Both parties locked until service complete
 
 ## Quick Start
 

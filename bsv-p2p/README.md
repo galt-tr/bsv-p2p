@@ -12,21 +12,14 @@ Peer-to-peer communication and BSV payment channels for OpenClaw bots.
 ## Quick Start
 
 ```bash
-# Clone
+# Clone & Install
 git clone https://github.com/galt-tr/bsv-p2p.git
-cd bsv-p2p
+cd bsv-p2p && npm install
 
-# Install
-npm install
+# Initialize (generates BSV keys)
+npx tsx scripts/init.ts
 
-# Configure (create ~/.bsv-p2p/config.json)
-{
-  "bsvPrivateKey": "YOUR_KEY",
-  "bsvPublicKey": "YOUR_PUBKEY",
-  "autoAcceptChannelsBelowSats": 100000
-}
-
-# Run daemon
+# Start daemon
 npx tsx src/daemon/index.ts
 ```
 

@@ -234,28 +234,32 @@ export class MessageHandler extends EventEmitter {
  * Format a message for display to agent
  */
 export function formatMessageForAgent(msg: Message, senderPeerId: string): string {
-  const senderShort = senderPeerId.substring(0, 12)
   const timestamp = new Date(msg.timestamp).toISOString()
   
   switch (msg.type) {
     case MessageType.TEXT:
-      return `[P2P Message] From: ${senderShort}...
+      return `[P2P Message]
+From: ${senderPeerId}
 Time: ${timestamp}
-Content: ${(msg as TextMessage).content}`
+Content: ${(msg as TextMessage).content}
+
+To reply: npx tsx send-message.ts ${senderPeerId} "your message"`
     
     case MessageType.REQUEST:
       const req = msg as RequestMessage
-      return `[P2P Service Request] From: ${senderShort}...
+      return `[P2P Service Request]
+From: ${senderPeerId}
 Time: ${timestamp}
 Service: ${req.service}
 Params: ${JSON.stringify(req.params, null, 2)}
 Request ID: ${req.id}
 
-Reply with: respond to ${req.id} with <your response>`
+To reply: npx tsx send-message.ts ${senderPeerId} "your response"`
     
     case MessageType.PAID_REQUEST:
       const paidReq = msg as PaidRequestMessage
-      return `[P2P Paid Request] From: ${senderShort}...
+      return `[P2P Paid Request] ⚡ PAYMENT ATTACHED
+From: ${senderPeerId}
 Time: ${timestamp}
 Service: ${paidReq.service}
 Payment: ${paidReq.payment.amount} sats
@@ -263,10 +267,12 @@ Channel: ${paidReq.channelId}
 Params: ${JSON.stringify(paidReq.params, null, 2)}
 Request ID: ${paidReq.id}
 
-Payment attached! Complete service and respond.`
+Complete the service and respond!
+To reply: npx tsx send-message.ts ${senderPeerId} "your response"`
     
     default:
-      return `[P2P ${msg.type}] From: ${senderShort}...
+      return `[P2P ${msg.type}]
+From: ${senderPeerId}
 Time: ${timestamp}
 Data: ${JSON.stringify(msg, null, 2)}`
   }

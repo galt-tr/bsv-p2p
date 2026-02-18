@@ -246,7 +246,7 @@ From: ${senderPeerId}
 Time: ${timestamp}
 Content: ${(msg as TextMessage).content}
 
-To reply: npx tsx send-message.ts ${senderPeerId} "your message"`
+To reply: cd ~/.openclaw/workspace/bsv-p2p && npx tsx send.ts ${senderPeerId} "your message"`
     
     case MessageType.REQUEST:
       const req = msg as RequestMessage
@@ -257,7 +257,7 @@ Service: ${req.service}
 Params: ${JSON.stringify(req.params, null, 2)}
 Request ID: ${req.id}
 
-To reply: npx tsx send-message.ts ${senderPeerId} "your response"`
+To reply: cd ~/.openclaw/workspace/bsv-p2p && npx tsx send.ts ${senderPeerId} "your response"`
     
     case MessageType.PAID_REQUEST:
       const paidReq = msg as PaidRequestMessage
@@ -271,7 +271,7 @@ Params: ${JSON.stringify(paidReq.params, null, 2)}
 Request ID: ${paidReq.id}
 
 Complete the service and respond!
-To reply: npx tsx send-message.ts ${senderPeerId} "your response"`
+To reply: cd ~/.openclaw/workspace/bsv-p2p && npx tsx send.ts ${senderPeerId} "your response"`
     
     default:
       return `[P2P ${msg.type}]

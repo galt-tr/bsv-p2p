@@ -30,7 +30,11 @@ export enum MessageType {
   // Paid service requests
   PAID_REQUEST = 'paid:request',
   PAID_RESULT = 'paid:result',
-  PAID_REFUND = 'paid:refund'
+  PAID_REFUND = 'paid:refund',
+  
+  // Direct payments (not through channels)
+  PAYMENT = 'payment',
+  PAYMENT_ACK = 'payment:ack'
 }
 
 // Base message structure
@@ -160,6 +164,25 @@ export interface PaidResultMessage extends BaseMessage {
   paymentAccepted: boolean
 }
 
+// Direct payment notification - funds sent on-chain
+export interface PaymentMessage extends BaseMessage {
+  type: MessageType.PAYMENT
+  txid: string           // Transaction ID
+  vout: number           // Output index
+  amount: number         // Satoshis sent
+  toAddress: string      // Recipient's BSV address
+  memo?: string          // Optional payment memo
+}
+
+// Payment acknowledgment
+export interface PaymentAckMessage extends BaseMessage {
+  type: MessageType.PAYMENT_ACK
+  paymentId: string      // ID of the PaymentMessage being acknowledged
+  txid: string
+  received: boolean      // Whether we've seen it on-chain
+  balance?: number       // Our new balance (optional)
+}
+
 // Union type for all messages
 export type Message = 
   | TextMessage
@@ -174,6 +197,8 @@ export type Message =
   | ChannelCloseMessage
   | PaidRequestMessage
   | PaidResultMessage
+  | PaymentMessage
+  | PaymentAckMessage
 
 // Helper to create message IDs
 export function createMessageId(): string {

@@ -4,6 +4,8 @@ import { P2PNode } from './node.js'
 import { GatewayConfig } from './gateway.js'
 import { ChannelManager } from '../channels/manager.js'
 import { ChannelProtocol } from '../channels/protocol.js'
+import { Wallet } from '../wallet/index.js'
+import { MessageType, PaymentMessage, PaymentAckMessage, createBaseMessage } from '../protocol/messages.js'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -446,9 +448,67 @@ Respond to complete the service.`
       log('INFO', 'STARTUP', 'Payment channels disabled (no BSV keys configured)')
     }
     
+    // Initialize wallet if BSV keys are configured
+    let wallet: Wallet | null = null
+    if (config.bsvPrivateKey) {
+      wallet = new Wallet({
+        privateKey: config.bsvPrivateKey
+      })
+      
+      log('INFO', 'STARTUP', `Wallet initialized: ${wallet.getAddress()}`)
+      log('INFO', 'STARTUP', `Balance: ${wallet.getBalance()} sats`)
+      
+      // Set up payment message handler
+      if (node.messages) {
+        node.messages.on(MessageType.PAYMENT, async (msg: PaymentMessage, fromPeerId: string) => {
+          log('INFO', 'PAYMENT', `Received payment notification from ${fromPeerId.substring(0, 16)}...`)
+          log('INFO', 'PAYMENT', `  TXID: ${msg.txid}, Amount: ${msg.amount} sats`)
+          
+          // Record the payment
+          wallet!.recordPayment(
+            msg.txid,
+            msg.vout,
+            msg.amount,
+            '', // Script will be fetched on sync
+            fromPeerId,
+            msg.memo
+          )
+          
+          // Wake agent to notify of payment
+          const text = `[P2P Payment Received]
+From: ${fromPeerId.substring(0, 16)}...
+Amount: ${msg.amount} sats
+TXID: ${msg.txid}
+${msg.memo ? `Memo: ${msg.memo}` : ''}`
+          
+          await node.gatewayClient.wake(text, { mode: 'now' })
+          
+          // Send acknowledgment
+          const ackMsg: PaymentAckMessage = {
+            ...createBaseMessage(MessageType.PAYMENT_ACK, node.peerId, fromPeerId),
+            type: MessageType.PAYMENT_ACK,
+            paymentId: msg.id,
+            txid: msg.txid,
+            received: true,
+            balance: wallet!.getBalance()
+          }
+          
+          await node.messages!.send(fromPeerId, ackMsg)
+        })
+        
+        node.messages.on(MessageType.PAYMENT_ACK, async (msg: PaymentAckMessage, fromPeerId: string) => {
+          log('INFO', 'PAYMENT', `Payment acknowledged by ${fromPeerId.substring(0, 16)}...`)
+          log('INFO', 'PAYMENT', `  TXID: ${msg.txid}, Their balance: ${msg.balance ?? 'unknown'}`)
+        })
+      }
+    }
+    
     log('INFO', 'STARTUP', '='.repeat(60))
     log('INFO', 'STARTUP', '✅ Daemon ready and healthy')
     log('INFO', 'STARTUP', `PeerId: ${node.peerId}`)
+    if (wallet) {
+      log('INFO', 'STARTUP', `Wallet: ${wallet.getAddress()}`)
+    }
     log('INFO', 'STARTUP', '='.repeat(60))
     
     // Start HTTP API server for sending messages
@@ -681,6 +741,193 @@ Respond to complete the service.`
             }))
           } catch (err: any) {
             log('ERROR', 'API', `Payment failed: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+      
+      // ============================================================
+      // Wallet Endpoints
+      // ============================================================
+      
+      // Get wallet address
+      if (req.method === 'GET' && req.url === '/wallet/address') {
+        if (!wallet) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Wallet not enabled (no BSV keys configured)' }))
+          return
+        }
+        
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          address: wallet.getAddress(),
+          publicKey: wallet.getPublicKey()
+        }))
+        return
+      }
+      
+      // Get wallet balance
+      if (req.method === 'GET' && req.url === '/wallet/balance') {
+        if (!wallet) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Wallet not enabled' }))
+          return
+        }
+        
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          balance: wallet.getBalance(),
+          utxos: wallet.getUTXOs().length
+        }))
+        return
+      }
+      
+      // Get wallet UTXOs
+      if (req.method === 'GET' && req.url === '/wallet/utxos') {
+        if (!wallet) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Wallet not enabled' }))
+          return
+        }
+        
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          utxos: wallet.getUTXOs()
+        }))
+        return
+      }
+      
+      // Sync wallet from blockchain
+      if (req.method === 'POST' && req.url === '/wallet/sync') {
+        if (!wallet) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Wallet not enabled' }))
+          return
+        }
+        
+        try {
+          const newUtxos = await wallet.sync()
+          res.writeHead(200)
+          res.end(JSON.stringify({
+            success: true,
+            newUtxos,
+            balance: wallet.getBalance()
+          }))
+        } catch (err: any) {
+          log('ERROR', 'API', `Wallet sync failed: ${err.message}`)
+          res.writeHead(500)
+          res.end(JSON.stringify({ error: err.message }))
+        }
+        return
+      }
+      
+      // Send payment to an address
+      if (req.method === 'POST' && req.url === '/wallet/send') {
+        if (!wallet) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Wallet not enabled' }))
+          return
+        }
+        
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', async () => {
+          try {
+            const { toAddress, amount, fee } = JSON.parse(body)
+            if (!toAddress || !amount) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing toAddress or amount' }))
+              return
+            }
+            
+            log('INFO', 'API', `Sending ${amount} sats to ${toAddress}`)
+            const result = await wallet!.send(toAddress, amount, fee ?? 200)
+            
+            res.writeHead(200)
+            res.end(JSON.stringify({
+              success: true,
+              txid: result.txid,
+              vout: result.vout,
+              change: result.change,
+              newBalance: wallet!.getBalance()
+            }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Send failed: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+      
+      // Send payment to a peer (on-chain + P2P notification)
+      if (req.method === 'POST' && req.url === '/payment/send') {
+        if (!wallet) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'Wallet not enabled' }))
+          return
+        }
+        
+        if (!node.messages) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'P2P messaging not available' }))
+          return
+        }
+        
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', async () => {
+          try {
+            const { peerId, amount, memo, fee } = JSON.parse(body)
+            if (!peerId || !amount) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing peerId or amount' }))
+              return
+            }
+            
+            // First, get peer's address by sending a request (or use known address)
+            // For now, we'll require the caller to provide the address
+            // In a full implementation, we'd query the peer first
+            const { toAddress } = JSON.parse(body)
+            if (!toAddress) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing toAddress (peer BSV address)' }))
+              return
+            }
+            
+            log('INFO', 'API', `Sending ${amount} sats to peer ${peerId.substring(0, 16)}... at ${toAddress}`)
+            
+            // Send the payment on-chain
+            const result = await wallet!.send(toAddress, amount, fee ?? 200)
+            
+            // Notify the peer via P2P
+            const paymentMsg: PaymentMessage = {
+              ...createBaseMessage(MessageType.PAYMENT, node.peerId, peerId),
+              type: MessageType.PAYMENT,
+              txid: result.txid,
+              vout: result.vout,
+              amount,
+              toAddress,
+              memo
+            }
+            
+            await node.messages!.send(peerId, paymentMsg)
+            log('INFO', 'API', `Payment notification sent to peer`)
+            
+            res.writeHead(200)
+            res.end(JSON.stringify({
+              success: true,
+              txid: result.txid,
+              vout: result.vout,
+              amount,
+              change: result.change,
+              newBalance: wallet!.getBalance(),
+              notificationSent: true
+            }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Payment to peer failed: ${err.message}`)
             res.writeHead(500)
             res.end(JSON.stringify({ error: err.message }))
           }

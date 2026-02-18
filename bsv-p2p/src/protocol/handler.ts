@@ -56,9 +56,9 @@ export class MessageHandler extends EventEmitter {
     this.node.handle(MESSAGE_PROTOCOL, async (data: any) => {
       const stream = data.stream || data
       const connection = data.connection
-      const remotePeer = connection?.remotePeer?.toString() || 'unknown'
+      const connectionPeer = connection?.remotePeer?.toString()
       
-      console.log(`[Message] Incoming from ${remotePeer.substring(0, 16)}...`)
+      console.log(`[Message] Incoming stream...`)
       
       try {
         // Read message with length-prefix
@@ -76,7 +76,10 @@ export class MessageHandler extends EventEmitter {
         }
         
         const message = deserializeMessage(messageData)
-        console.log(`[Message] Received ${message.type} from ${message.from.substring(0, 16)}...`)
+        // Use message.from as the authoritative peer ID (works over relay)
+        // Fall back to connection.remotePeer if message.from is missing
+        const senderPeerId = message.from || connectionPeer || 'unknown'
+        console.log(`[Message] Received ${message.type} from ${senderPeerId.substring(0, 16)}...`)
         
         // Check if this is a response to a pending request
         if (message.type === MessageType.RESPONSE || message.type === MessageType.PAID_RESULT) {
@@ -90,8 +93,8 @@ export class MessageHandler extends EventEmitter {
           }
         }
         
-        // Emit for external handling
-        this.emit('message', message, remotePeer)
+        // Emit for external handling - use senderPeerId from message
+        this.emit('message', message, senderPeerId)
         
         // Also emit specific event for message type
         this.emit(message.type, message, remotePeer)

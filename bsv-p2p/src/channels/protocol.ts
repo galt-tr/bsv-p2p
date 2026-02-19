@@ -447,12 +447,17 @@ export class ChannelProtocol extends EventEmitter {
     }
     
     // Process payment
+    // IMPORTANT: The payment must be constructed from the SENDER's perspective,
+    // because processPayment() will swap the balances to convert to receiver's perspective.
+    // The sender (remote peer) paid us, so:
+    //   - newLocalBalance = sender's new balance (their local, which is our remote - amount)
+    //   - newRemoteBalance = our new balance (their remote, which is our local + amount)
     const payment: ChannelPayment = {
       channelId: msg.channelId,
       amount: msg.payment.amount,
       newSequenceNumber: msg.payment.sequence,
-      newLocalBalance: channel.localBalance + msg.payment.amount,
-      newRemoteBalance: channel.remoteBalance - msg.payment.amount,
+      newLocalBalance: channel.remoteBalance - msg.payment.amount,   // Sender's new balance
+      newRemoteBalance: channel.localBalance + msg.payment.amount,   // Our new balance
       signature: msg.payment.signature,
       timestamp: msg.timestamp
     }

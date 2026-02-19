@@ -228,10 +228,12 @@ export class ChannelManager extends EventEmitter {
     // TODO: Verify signature
 
     // Update channel state
-    // Note: For incoming payments, newLocalBalance is THEIR new balance (becomes our remote)
-    // We need to swap the perspective
-    channel.localBalance = payment.newRemoteBalance  // Their remote is our local
-    channel.remoteBalance = payment.newLocalBalance  // Their local is our remote
+    // Note: For incoming payments, the payment contains the SENDER's perspective:
+    //   payment.newLocalBalance = sender's new local balance
+    //   payment.newRemoteBalance = sender's new remote balance (which is our new local balance)
+    // So we swap them to get our perspective:
+    channel.remoteBalance = payment.newLocalBalance  // Sender's local is our remote
+    channel.localBalance = payment.newRemoteBalance  // Sender's remote is our local
     channel.sequenceNumber = payment.newSequenceNumber
     channel.updatedAt = Date.now()
     

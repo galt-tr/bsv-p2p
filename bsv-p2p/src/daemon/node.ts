@@ -31,6 +31,7 @@ import {
 import { GatewayClient, GatewayConfig } from './gateway.js'
 import { ChannelMessage, ChannelMessageType, deserializeMessage, CHANNEL_PROTOCOL } from '../channels/wire.js'
 import { MessageHandler, formatMessageForAgent, Message, MessageType, TextMessage, RequestMessage, PaidRequestMessage, MESSAGE_PROTOCOL } from '../protocol/index.js'
+import { DiscoveryService } from './discovery.js'
 
 const KEY_FILE = join(homedir(), '.bsv-p2p', 'peer-key.json')
 const RELAY_ADDR = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
@@ -92,6 +93,7 @@ export class P2PNode extends EventEmitter {
   private bsvIdentityKey: string | null = null
   private announcementInterval: NodeJS.Timeout | null = null
   private messageHandler: MessageHandler | null = null
+  private discovery: DiscoveryService | null = null
 
   constructor(config: P2PNodeConfig = {}) {
     super()
@@ -334,18 +336,19 @@ export class P2PNode extends EventEmitter {
       streamMuxers: [yamux()],
       peerDiscovery,
       services: {
-        identify: identify()
-        // Minimal services only - matches working relay test
-        // ping, gossipsub, and NAT services disabled - they interfere with relay reservations
+        identify: identify(),
+        pubsub: gossipsub({
+          emitSelf: false,
+          allowPublishToZeroTopicPeers: true
+        })
+        // Enable GossipSub for service discovery
+        // ping and NAT services still disabled to avoid relay issues
       }
     })
 
     // Set up event handlers
     this.setupEventHandlers()
 
-    // Subscribe to announcement topic
-    await this.subscribeToTopics()
-    
     // Set up protocol handlers for direct messages
     this.setupProtocolHandlers()
 
@@ -361,6 +364,42 @@ export class P2PNode extends EventEmitter {
     })
     this.messageHandler.register()
 
+    // Initialize discovery service
+    const pubsub = this.node.services.pubsub as any
+    if (pubsub) {
+      this.discovery = new DiscoveryService(this.peerId, {
+        announceIntervalMs: this.config.announceInterval || 300000,
+        staleTimeoutMs: 900000,   // 15 minutes
+        cleanupIntervalMs: 60000  // 1 minute
+      })
+
+      // Forward discovery events
+      this.discovery.on('peer:discovered', (peer: PeerInfo) => {
+        this.peers.set(peer.peerId, peer)
+        this.emit('peer:discovered', peer)
+        console.log(`[Discovery] New peer: ${peer.peerId.substring(0, 16)}... with ${peer.services?.length || 0} services`)
+      })
+
+      this.discovery.on('peer:updated', (peer: PeerInfo) => {
+        this.peers.set(peer.peerId, peer)
+        this.emit('peer:updated', peer)
+      })
+
+      this.discovery.on('peer:stale', (peerId: string) => {
+        this.peers.delete(peerId)
+        this.emit('peer:stale', peerId)
+      })
+
+      this.discovery.on('announcement', (announcement: PeerAnnouncement) => {
+        this.emit('announcement:received', announcement)
+      })
+
+      await this.discovery.start(pubsub, this.multiaddrs)
+      console.log('[Discovery] Service initialized')
+    } else {
+      console.warn('[Discovery] PubSub not available, discovery disabled')
+    }
+
     console.log(`P2P node started with PeerId: ${this.peerId}`)
     console.log(`Listening on: ${this.multiaddrs.join(', ')}`)
   }
@@ -369,6 +408,11 @@ export class P2PNode extends EventEmitter {
     if (this.announcementInterval) {
       clearInterval(this.announcementInterval)
       this.announcementInterval = null
+    }
+    
+    if (this.discovery) {
+      await this.discovery.stop()
+      this.discovery = null
     }
     
     this.stopRelayConnectionMaintenance()
@@ -811,54 +855,48 @@ Data: ${JSON.stringify(message).substring(0, 200)}`
     }
   }
 
+  // Legacy announcement methods (now handled by DiscoveryService)
   async announce(): Promise<void> {
-    if (!this.node) return
-
-    const pubsub = this.node.services.pubsub as any
-    if (!pubsub) {
-      // PubSub not available, skip announcement
-      return
+    if (this.discovery) {
+      // Discovery service handles announcements automatically
+      console.log('[P2PNode] Announcements handled by DiscoveryService')
     }
-
-    const announcement: PeerAnnouncement = {
-      peerId: this.peerId,
-      bsvIdentityKey: this.bsvIdentityKey ?? '',
-      services: this.services,
-      multiaddrs: this.multiaddrs,
-      timestamp: Date.now(),
-      signature: '' // TODO: Sign with BSV key
-    }
-
-    const data = new TextEncoder().encode(JSON.stringify(announcement))
-    await pubsub.publish(TOPICS.ANNOUNCE, data)
-    console.log('Published announcement')
   }
 
   startAnnouncing(intervalMs: number = 300000): void {
-    // Announce immediately
-    this.announce().catch(console.error)
-    
-    // Then announce periodically
-    this.announcementInterval = setInterval(() => {
-      this.announce().catch(console.error)
-    }, intervalMs)
+    // Discovery service starts announcing automatically in start()
+    console.log('[P2PNode] Discovery service handles announcements automatically')
   }
 
   setBsvIdentityKey(key: string): void {
     this.bsvIdentityKey = key
+    if (this.discovery) {
+      this.discovery.setBsvIdentityKey(key)
+    }
   }
 
   registerService(service: ServiceInfo): void {
     // Remove existing service with same id
     this.services = this.services.filter(s => s.id !== service.id)
     this.services.push(service)
+    
+    if (this.discovery) {
+      this.discovery.registerService(service)
+    }
   }
 
   unregisterService(serviceId: string): void {
     this.services = this.services.filter(s => s.id !== serviceId)
+    
+    if (this.discovery) {
+      this.discovery.unregisterService(serviceId)
+    }
   }
 
   getServices(): ServiceInfo[] {
+    if (this.discovery) {
+      return this.discovery.getServices()
+    }
     return [...this.services]
   }
 
@@ -913,15 +951,22 @@ Data: ${JSON.stringify(message).substring(0, 200)}`
 
   // Discovery methods
   async discoverPeers(options?: { service?: string }): Promise<PeerInfo[]> {
-    let peers = this.getPeers()
-    
-    if (options?.service) {
-      peers = peers.filter(p => 
-        p.services?.some(s => s.id === options.service)
-      )
+    if (this.discovery && options?.service) {
+      return this.discovery.discoverService(options.service)
     }
     
-    return peers
+    return this.getPeers()
+  }
+  
+  /**
+   * Get discovery service statistics
+   */
+  getDiscoveryStats(): {
+    knownPeers: number
+    registeredServices: number
+    isRunning: boolean
+  } | null {
+    return this.discovery?.getStats() ?? null
   }
 }
 

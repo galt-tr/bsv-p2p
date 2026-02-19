@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs
+dist/
+build/
+*.js
+*.js.map
+*.d.ts
+!scripts/*.js
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Environment
+.env
+.env.local
+
+# BSV P2P specific
+.bsv-p2p/
+daemon.pid
+daemon.log

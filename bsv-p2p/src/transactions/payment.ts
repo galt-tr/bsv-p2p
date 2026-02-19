@@ -34,6 +34,7 @@ export async function createP2PKHPayment(
     tx.addInput({
       sourceTXID: utxo.txid,
       sourceOutputIndex: utxo.vout,
+      sourceSatoshis: utxo.satoshis,
       unlockingScriptTemplate: new P2PKH().unlock(fromPrivKey),
       sequence: 0xffffffff
     })

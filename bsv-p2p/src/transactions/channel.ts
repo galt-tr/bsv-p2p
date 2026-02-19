@@ -5,7 +5,7 @@
  * - Close (cooperative settlement)
  */
 
-import { Transaction, P2PKH, PrivateKey, PublicKey, Script, LockingScript, UnlockingScript, OP } from '@bsv/sdk'
+import { Transaction, P2PKH, PrivateKey, PublicKey, Script, LockingScript, UnlockingScript, OP, TransactionSignature, Hash } from '@bsv/sdk'
 import type { ChannelFundingResult, CommitmentTxResult, TxResult } from './types.js'
 
 /**
@@ -57,6 +57,7 @@ export async function createChannelFunding(
     tx.addInput({
       sourceTXID: utxo.txid,
       sourceOutputIndex: utxo.vout,
+      sourceSatoshis: utxo.satoshis,
       unlockingScriptTemplate: new P2PKH().unlock(fromPrivKey),
       sequence: 0xffffffff
     })
@@ -158,8 +159,25 @@ export async function createChannelCommitment(
   }
   
   // Create signature hash for multisig input
-  const sigHash = tx.sighash(0, LockingScript.fromHex(fundingScript))
-  const signature = myPrivKey.sign(sigHash)
+  // Use SIGHASH_ALL (0x01) for standard signing
+  const preimage = TransactionSignature.format({
+    sourceTXID: fundingTxid,
+    sourceOutputIndex: fundingVout,
+    sourceSatoshis: myBalance + peerBalance,
+    transactionVersion: tx.version,
+    otherInputs: [],
+    inputIndex: 0,
+    outputs: tx.outputs.map(out => ({
+      satoshis: out.satoshis,
+      lockingScript: out.lockingScript
+    })),
+    inputSequence: nSequence,
+    subscript: LockingScript.fromHex(fundingScript),
+    lockTime: nLockTime,
+    scope: TransactionSignature.SIGHASH_ALL | TransactionSignature.SIGHASH_FORKID
+  })
+  
+  const signature = myPrivKey.sign(Hash.sha256(Hash.sha256(preimage)))
   
   return {
     tx: tx.toHex(),

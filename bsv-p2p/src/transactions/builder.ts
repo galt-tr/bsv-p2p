@@ -204,6 +204,7 @@ export class TransactionBuilder {
       tx.addInput({
         sourceTXID: utxo.txid,
         sourceOutputIndex: utxo.vout,
+        sourceSatoshis: utxo.satoshis,
         unlockingScriptTemplate: new P2PKH().unlock(this.privKey),
         sequence: this.sequence
       })

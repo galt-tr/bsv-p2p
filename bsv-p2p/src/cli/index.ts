@@ -499,4 +499,247 @@ program
     console.log()
   })
 
+// ============ STATUS COMMAND ============
+program
+  .command('status')
+  .description('Show comprehensive system status')
+  .action(async () => {
+    const daemonStatus = isDaemonRunning()
+    
+    console.log(chalk.bold('\n🔌 BSV P2P System Status\n'))
+    console.log(chalk.bold('━'.repeat(50)))
+    
+    // Daemon
+    console.log(chalk.bold('\nDaemon:'))
+    if (daemonStatus.running) {
+      console.log(`  ${chalk.green('●')} Running (PID: ${daemonStatus.pid})`)
+      
+      try {
+        const info = await apiCall('GET', '/status')
+        console.log(`  ${chalk.gray('Uptime:')} ${Math.floor((Date.now() - info.startTime) / 1000)}s`)
+        console.log(`  ${chalk.gray('Peer ID:')} ${info.peerId || 'unknown'}`)
+      } catch {
+        console.log(`  ${chalk.yellow('⚠')} API unreachable`)
+      }
+    } else {
+      console.log(`  ${chalk.red('○')} Not running`)
+    }
+    
+    // Network
+    console.log(chalk.bold('\nNetwork:'))
+    if (daemonStatus.running) {
+      try {
+        const info = await apiCall('GET', '/status')
+        const peers = await apiCall('GET', '/peers')
+        console.log(`  ${chalk.gray('Relay:')} ${info.relayAddress || 'disconnected'}`)
+        if (info.relayReservation) {
+          console.log(`  ${chalk.gray('Reservation:')} ${chalk.green('active')}`)
+        }
+        console.log(`  ${chalk.gray('Connected peers:')} ${peers.peers?.length || 0}`)
+      } catch {
+        console.log(`  ${chalk.yellow('⚠')} Status unavailable`)
+      }
+    } else {
+      console.log(`  ${chalk.gray('Status:')} daemon not running`)
+    }
+    
+    // Channels
+    console.log(chalk.bold('\nPayment Channels:'))
+    if (daemonStatus.running) {
+      try {
+        const result = await apiCall('GET', '/channels')
+        const channels = result.channels || []
+        const openChannels = channels.filter((c: any) => c.state === 'open')
+        const totalCapacity = channels.reduce((sum: number, c: any) => sum + c.capacity, 0)
+        const localBalance = channels.reduce((sum: number, c: any) => sum + c.localBalance, 0)
+        
+        console.log(`  ${chalk.gray('Total channels:')} ${channels.length} (${openChannels.length} open)`)
+        console.log(`  ${chalk.gray('Total capacity:')} ${totalCapacity} sats`)
+        console.log(`  ${chalk.gray('Local balance:')} ${localBalance} sats`)
+      } catch {
+        console.log(`  ${chalk.yellow('⚠')} Status unavailable`)
+      }
+    } else {
+      console.log(`  ${chalk.gray('Status:')} daemon not running`)
+    }
+    
+    // BSV Wallet (placeholder)
+    console.log(chalk.bold('\nBSV Wallet:'))
+    console.log(`  ${chalk.gray('Status:')} ${chalk.yellow('not integrated')}`)
+    
+    // OpenClaw Integration
+    console.log(chalk.bold('\nOpenClaw Integration:'))
+    const hasOpenClaw = existsSync(join(homedir(), '.openclaw'))
+    if (hasOpenClaw) {
+      console.log(`  ${chalk.green('✓')} OpenClaw detected`)
+      // Check if skill is registered
+      const skillsDir = join(homedir(), '.openclaw', 'skills', 'bsv-p2p')
+      if (existsSync(skillsDir)) {
+        console.log(`  ${chalk.green('✓')} Skill registered`)
+      } else {
+        console.log(`  ${chalk.yellow('⚠')} Skill not registered`)
+      }
+    } else {
+      console.log(`  ${chalk.gray('○')} OpenClaw not detected`)
+    }
+    
+    console.log(chalk.bold('\n' + '━'.repeat(50)))
+    console.log()
+  })
+
+// ============ DOCTOR COMMAND ============
+program
+  .command('doctor')
+  .description('Diagnose system health and configuration')
+  .action(async () => {
+    console.log(chalk.bold('\n🩺 BSV P2P Health Check\n'))
+    console.log(chalk.bold('━'.repeat(50)))
+    
+    const checks: Array<{ name: string; status: 'pass' | 'warn' | 'fail'; message: string }> = []
+    
+    // Check 1: Node.js version
+    const nodeVersion = process.version
+    const majorVersion = parseInt(nodeVersion.slice(1).split('.')[0], 10)
+    if (majorVersion >= 22) {
+      checks.push({ name: 'Node.js version', status: 'pass', message: `${nodeVersion} (compatible)` })
+    } else {
+      checks.push({ name: 'Node.js version', status: 'warn', message: `${nodeVersion} (recommend v22+)` })
+    }
+    
+    // Check 2: Config file
+    const configFile = getConfigFile()
+    if (existsSync(configFile)) {
+      try {
+        JSON.parse(readFileSync(configFile, 'utf-8'))
+        checks.push({ name: 'Config file', status: 'pass', message: 'valid' })
+      } catch {
+        checks.push({ name: 'Config file', status: 'fail', message: 'invalid JSON' })
+      }
+    } else {
+      checks.push({ name: 'Config file', status: 'warn', message: 'not created (will use defaults)' })
+    }
+    
+    // Check 3: Data directory
+    const dataDir = getDataDir()
+    if (existsSync(dataDir)) {
+      checks.push({ name: 'Data directory', status: 'pass', message: dataDir })
+    } else {
+      checks.push({ name: 'Data directory', status: 'fail', message: 'not found' })
+    }
+    
+    // Check 4: Daemon status
+    const daemonStatus = isDaemonRunning()
+    if (daemonStatus.running) {
+      checks.push({ name: 'Daemon', status: 'pass', message: `running (PID ${daemonStatus.pid})` })
+      
+      // Check 5: API reachable
+      try {
+        await apiCall('GET', '/status')
+        checks.push({ name: 'API endpoint', status: 'pass', message: `port ${API_PORT}` })
+      } catch (err: any) {
+        checks.push({ name: 'API endpoint', status: 'fail', message: err.message })
+      }
+      
+      // Check 6: Relay connection
+      try {
+        const info = await apiCall('GET', '/status')
+        if (info.relayAddress) {
+          checks.push({ name: 'Relay connection', status: 'pass', message: info.relayAddress })
+        } else {
+          checks.push({ name: 'Relay connection', status: 'warn', message: 'not connected' })
+        }
+      } catch {
+        checks.push({ name: 'Relay connection', status: 'warn', message: 'status unavailable' })
+      }
+    } else {
+      checks.push({ name: 'Daemon', status: 'warn', message: 'not running' })
+    }
+    
+    // Check 7: Port conflicts
+    try {
+      const response = await fetch(`http://127.0.0.1:${API_PORT}/status`)
+      if (daemonStatus.running) {
+        checks.push({ name: 'Port check', status: 'pass', message: `${API_PORT} available` })
+      } else {
+        checks.push({ name: 'Port check', status: 'warn', message: `${API_PORT} in use by another process` })
+      }
+    } catch {
+      if (!daemonStatus.running) {
+        checks.push({ name: 'Port check', status: 'pass', message: `${API_PORT} available` })
+      }
+    }
+    
+    // Check 8: OpenClaw integration
+    const hasOpenClaw = existsSync(join(homedir(), '.openclaw'))
+    if (hasOpenClaw) {
+      checks.push({ name: 'OpenClaw', status: 'pass', message: 'detected' })
+      
+      const skillsDir = join(homedir(), '.openclaw', 'skills', 'bsv-p2p')
+      if (existsSync(skillsDir)) {
+        checks.push({ name: 'OpenClaw skill', status: 'pass', message: 'registered' })
+      } else {
+        checks.push({ name: 'OpenClaw skill', status: 'warn', message: 'not registered' })
+      }
+    } else {
+      checks.push({ name: 'OpenClaw', status: 'warn', message: 'not detected' })
+    }
+    
+    // Check 9: BSV keys
+    if (existsSync(configFile)) {
+      try {
+        const config = JSON.parse(readFileSync(configFile, 'utf-8'))
+        if (config.bsvIdentityKey) {
+          checks.push({ name: 'BSV identity key', status: 'pass', message: 'configured' })
+        } else {
+          checks.push({ name: 'BSV identity key', status: 'warn', message: 'not set' })
+        }
+      } catch {
+        checks.push({ name: 'BSV identity key', status: 'warn', message: 'config unreadable' })
+      }
+    } else {
+      checks.push({ name: 'BSV identity key', status: 'warn', message: 'no config file' })
+    }
+    
+    // Print results
+    console.log()
+    let passCount = 0
+    let warnCount = 0
+    let failCount = 0
+    
+    checks.forEach(check => {
+      let icon = ''
+      let color: typeof chalk.green = chalk.gray
+      
+      if (check.status === 'pass') {
+        icon = '✓'
+        color = chalk.green
+        passCount++
+      } else if (check.status === 'warn') {
+        icon = '⚠'
+        color = chalk.yellow
+        warnCount++
+      } else {
+        icon = '✗'
+        color = chalk.red
+        failCount++
+      }
+      
+      console.log(`  ${color(icon)} ${chalk.bold(check.name)}: ${check.message}`)
+    })
+    
+    console.log(chalk.bold('\n' + '━'.repeat(50)))
+    console.log()
+    console.log(`${chalk.green('✓')} ${passCount} passed  ${chalk.yellow('⚠')} ${warnCount} warnings  ${chalk.red('✗')} ${failCount} failed`)
+    console.log()
+    
+    if (failCount > 0) {
+      console.log(chalk.red('Some checks failed. Review the issues above.'))
+    } else if (warnCount > 0) {
+      console.log(chalk.yellow('System is functional but some warnings need attention.'))
+    } else {
+      console.log(chalk.green('All checks passed! System is healthy.'))
+    }
+    console.log()
+  })
+
 program.parse()

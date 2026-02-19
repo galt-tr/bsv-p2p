@@ -1,5 +1,6 @@
 import { createLibp2p, Libp2p } from 'libp2p'
 import { tcp } from '@libp2p/tcp'
+import { webSockets } from '@libp2p/websockets'
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
 import { gossipsub } from '@chainsafe/libp2p-gossipsub'
@@ -319,6 +320,7 @@ export class P2PNode extends EventEmitter {
       addresses: {
         listen: [
           `/ip4/0.0.0.0/tcp/${this.config.port}`,
+          `/ip4/0.0.0.0/tcp/${this.config.port + 1}/ws`,  // WebSocket on port+1
           '/p2p-circuit'  // Listen via relay for incoming connections
         ],
         // Only include announce if non-empty, otherwise let libp2p auto-discover relay addresses
@@ -326,6 +328,7 @@ export class P2PNode extends EventEmitter {
       },
       transports: [
         tcp(),
+        webSockets(),
         circuitRelayTransport({
           // Default options - libp2p handles relay discovery and reservation automatically
           // when we dial a relay peer and have '/p2p-circuit' in our listen addresses

@@ -12,6 +12,8 @@
     "dev": "tsx watch src/cli/index.ts",
     "cli": "tsx src/cli/index.ts",
     "daemon": "tsx src/daemon/index.ts",
+    "daemon:install": "bash scripts/install-service.sh install",
+    "daemon:uninstall": "bash scripts/install-service.sh uninstall",
     "setup": "bash scripts/setup.sh",
     "test": "vitest run",
     "test:watch": "vitest",

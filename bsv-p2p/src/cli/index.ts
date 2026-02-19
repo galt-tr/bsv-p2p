@@ -529,6 +529,131 @@ program
     console.log()
   })
 
+// ============ SETUP COMMAND ============
+program
+  .command('setup')
+  .description('First-run setup wizard')
+  .action(async () => {
+    console.log(chalk.bold('\n🎉 Welcome to BSV P2P!\n'))
+    console.log('BSV P2P enables peer-to-peer communication and payment channels')
+    console.log('between AI agents using Bitcoin SV.')
+    console.log()
+    console.log(chalk.bold('━'.repeat(60)))
+    console.log()
+    
+    // Step 1: Check if already set up
+    const configFile = getConfigFile()
+    const dataDir = getDataDir()
+    const alreadySetup = existsSync(configFile)
+    
+    if (alreadySetup) {
+      console.log(chalk.yellow('⚠ Configuration already exists'))
+      console.log(chalk.gray(`  Location: ${configFile}`))
+      console.log()
+      console.log('To reconfigure, delete the config file and run setup again.')
+      console.log()
+      return
+    }
+    
+    console.log(chalk.bold('Step 1: Data Directory'))
+    console.log(`Your P2P data will be stored in: ${chalk.cyan(dataDir)}`)
+    console.log()
+    
+    // Step 2: Generate config
+    console.log(chalk.bold('Step 2: Generating Configuration'))
+    const config = {
+      port: 4001,
+      apiPort: 4002,
+      enableRelay: true,
+      bootstrapPeers: [],
+      created: new Date().toISOString()
+    }
+    
+    writeFileSync(configFile, JSON.stringify(config, null, 2))
+    console.log(chalk.green('✓') + ' Configuration created')
+    console.log()
+    
+    // Step 3: Identity
+    console.log(chalk.bold('Step 3: Identity'))
+    console.log('Starting the daemon will automatically generate:')
+    console.log(chalk.gray('  • libp2p Peer ID (Ed25519)'))
+    console.log(chalk.gray('  • BSV identity key (secp256k1) - optional'))
+    console.log()
+    
+    // Step 4: Test connectivity (if daemon running)
+    const daemonStatus = isDaemonRunning()
+    if (daemonStatus.running) {
+      console.log(chalk.bold('Step 4: Testing Connectivity'))
+      try {
+        const info = await apiCall('GET', '/status')
+        console.log(chalk.green('✓') + ' Daemon is running')
+        console.log(`  ${chalk.gray('Peer ID:')} ${info.peerId}`)
+        
+        if (info.relayAddress) {
+          console.log(chalk.green('✓') + ' Connected to relay')
+          console.log(`  ${chalk.gray('Relay:')} ${info.relayAddress}`)
+        } else {
+          console.log(chalk.yellow('⚠') + ' Not connected to relay')
+          console.log(chalk.gray('  The daemon will attempt to connect automatically'))
+        }
+      } catch (err: any) {
+        console.log(chalk.yellow('⚠') + ' Daemon API unreachable')
+        console.log(chalk.gray(`  Error: ${err.message}`))
+      }
+      console.log()
+    } else {
+      console.log(chalk.bold('Step 4: Starting the Daemon'))
+      console.log('Run: ' + chalk.cyan('bsv-p2p daemon start'))
+      console.log()
+    }
+    
+    // Step 5: OpenClaw integration
+    console.log(chalk.bold('Step 5: OpenClaw Integration'))
+    const hasOpenClaw = existsSync(join(homedir(), '.openclaw'))
+    if (hasOpenClaw) {
+      console.log(chalk.green('✓') + ' OpenClaw detected')
+      
+      const skillsDir = join(homedir(), '.openclaw', 'skills', 'bsv-p2p')
+      if (existsSync(skillsDir)) {
+        console.log(chalk.green('✓') + ' Skill already registered')
+      } else {
+        console.log(chalk.yellow('⚠') + ' Skill not registered')
+        console.log(chalk.gray('  Link this directory to OpenClaw skills:'))
+        console.log(chalk.gray(`  ln -s ${process.cwd()} ${skillsDir}`))
+      }
+    } else {
+      console.log(chalk.gray('○ OpenClaw not detected'))
+      console.log(chalk.gray('  Install OpenClaw to use P2P in your AI agent'))
+      console.log(chalk.gray('  https://openclaw.ai'))
+    }
+    console.log()
+    
+    // Step 6: Next steps
+    console.log(chalk.bold('━'.repeat(60)))
+    console.log()
+    console.log(chalk.bold.green('✓ Setup Complete!'))
+    console.log()
+    console.log(chalk.bold('Next steps:'))
+    console.log()
+    console.log('  1. Start the daemon:')
+    console.log('     ' + chalk.cyan('bsv-p2p daemon start'))
+    console.log()
+    console.log('  2. Check status:')
+    console.log('     ' + chalk.cyan('bsv-p2p status'))
+    console.log()
+    console.log('  3. Run health checks:')
+    console.log('     ' + chalk.cyan('bsv-p2p doctor'))
+    console.log()
+    console.log('  4. Connect to peers:')
+    console.log('     ' + chalk.cyan('bsv-p2p peers connect <multiaddr>'))
+    console.log()
+    console.log('  5. Open a payment channel:')
+    console.log('     ' + chalk.cyan('bsv-p2p channels open <peerId> <satoshis> --pubkey <key>'))
+    console.log()
+    console.log(chalk.gray('For more help, visit: https://github.com/galt-tr/bsv-p2p'))
+    console.log()
+  })
+
 // ============ STATUS COMMAND ============
 program
   .command('status')

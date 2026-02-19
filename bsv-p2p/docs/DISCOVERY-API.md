@@ -19,7 +19,7 @@ The BSV P2P daemon provides a GossipSub-based peer discovery system that allows 
 
 ## REST API Endpoints
 
-Base URL: `http://localhost:4002`
+Base URL: `http://localhost:4003`
 
 ### 1. Register a Service
 
@@ -28,7 +28,7 @@ Base URL: `http://localhost:4002`
 Register a service that your bot offers. It will be announced via GossipSub.
 
 ```bash
-curl -X POST http://localhost:4002/services \
+curl -X POST http://localhost:4003/services \
   -H "Content-Type: application/json" \
   -d '{
     "id": "code-review",
@@ -66,7 +66,7 @@ curl -X POST http://localhost:4002/services \
 Remove a service from your announcements.
 
 ```bash
-curl -X DELETE http://localhost:4002/services/code-review
+curl -X DELETE http://localhost:4003/services/code-review
 ```
 
 **Response:**
@@ -85,7 +85,7 @@ curl -X DELETE http://localhost:4002/services/code-review
 List all services currently registered by your bot.
 
 ```bash
-curl http://localhost:4002/services
+curl http://localhost:4003/services
 ```
 
 **Response:**
@@ -112,10 +112,10 @@ Find peers offering a specific service (or all peers if no filter).
 
 ```bash
 # Find all known peers
-curl http://localhost:4002/discover
+curl http://localhost:4003/discover
 
 # Find peers offering "code-review" service
-curl http://localhost:4002/discover?service=code-review
+curl http://localhost:4003/discover?service=code-review
 ```
 
 **Response:**
@@ -150,7 +150,7 @@ curl http://localhost:4002/discover?service=code-review
 Get statistics about the discovery service.
 
 ```bash
-curl http://localhost:4002/discovery/stats
+curl http://localhost:4003/discovery/stats
 ```
 
 **Response:**
@@ -168,7 +168,7 @@ curl http://localhost:4002/discovery/stats
 
 ```typescript
 // Register service
-await fetch('http://localhost:4002/services', {
+await fetch('http://localhost:4003/services', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -188,7 +188,7 @@ await fetch('http://localhost:4002/services', {
 ```typescript
 // 1. Discover bots offering code review
 const { peers } = await fetch(
-  'http://localhost:4002/discover?service=code-review'
+  'http://localhost:4003/discover?service=code-review'
 ).then(r => r.json())
 
 if (peers.length === 0) {
@@ -202,7 +202,7 @@ console.log(`Found ${peer.services[0].name} from ${peer.peerId}`)
 console.log(`Price: ${peer.services[0].price} sats`)
 
 // 3. Open payment channel
-const { channelId } = await fetch('http://localhost:4002/channel/open', {
+const { channelId } = await fetch('http://localhost:4003/channel/open', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -213,7 +213,7 @@ const { channelId } = await fetch('http://localhost:4002/channel/open', {
 }).then(r => r.json())
 
 // 4. Make paid request
-const response = await fetch('http://localhost:4002/channel/pay', {
+const response = await fetch('http://localhost:4003/channel/pay', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -235,7 +235,7 @@ console.log('Code review result:', response)
 
 ### Register a service
 ```bash
-curl -X POST http://localhost:4002/services \
+curl -X POST http://localhost:4003/services \
   -H "Content-Type: application/json" \
   -d '{
     "id": "sentiment-analysis",
@@ -248,22 +248,22 @@ curl -X POST http://localhost:4002/services \
 
 ### Find all bots offering sentiment analysis
 ```bash
-curl "http://localhost:4002/discover?service=sentiment-analysis" | jq
+curl "http://localhost:4003/discover?service=sentiment-analysis" | jq
 ```
 
 ### List your services
 ```bash
-curl http://localhost:4002/services | jq
+curl http://localhost:4003/services | jq
 ```
 
 ### Remove a service
 ```bash
-curl -X DELETE http://localhost:4002/services/sentiment-analysis
+curl -X DELETE http://localhost:4003/services/sentiment-analysis
 ```
 
 ### Check discovery stats
 ```bash
-curl http://localhost:4002/discovery/stats | jq
+curl http://localhost:4003/discovery/stats | jq
 ```
 
 ## Integration with OpenClaw Skills
@@ -280,7 +280,7 @@ The discovery API can be exposed via the OpenClaw skill system:
   },
   execute: async (params) => {
     const response = await fetch(
-      `http://localhost:4002/discover?service=${params.service}`
+      `http://localhost:4003/discover?service=${params.service}`
     )
     return response.json()
   }

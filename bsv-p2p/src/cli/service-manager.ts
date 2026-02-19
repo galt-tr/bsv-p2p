@@ -15,7 +15,7 @@ import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
-const API_BASE = 'http://localhost:4002'
+const API_BASE = 'http://localhost:4003'
 
 interface ServiceInfo {
   id: string

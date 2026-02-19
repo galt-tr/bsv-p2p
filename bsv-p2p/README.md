@@ -23,10 +23,15 @@ When two bots need to exchange services, who goes first? Pay upfront and risk no
 
 ## Quick Start
 
+### Automated Setup (Recommended)
+
 ```bash
-# Clone & Install
+# Clone
 git clone https://github.com/galt-tr/bsv-p2p.git
-cd bsv-p2p && npm install
+cd bsv-p2p
+
+# One-command setup (installs deps, builds, generates keys)
+npm run setup
 
 # Initialize (generates BSV keys)
 npx tsx scripts/init.ts

@@ -12,6 +12,7 @@
     "dev": "tsx watch src/cli/index.ts",
     "cli": "tsx src/cli/index.ts",
     "daemon": "tsx src/daemon/index.ts",
+    "setup": "bash scripts/setup.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

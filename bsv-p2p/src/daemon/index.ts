@@ -529,6 +529,33 @@ ${msg.memo ? `Memo: ${msg.memo}` : ''}`
         return
       }
       
+      // Get list of connected peers
+      if (req.method === 'GET' && req.url === '/peers') {
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          peers: node.getConnectedPeers().map(peerId => ({ peerId }))
+        }))
+        return
+      }
+      
+      // Discover peers (returns connected peers for now; could be extended with service discovery)
+      if (req.method === 'GET' && (req.url === '/discover' || req.url?.startsWith('/discover?'))) {
+        const url = new URL(req.url!, `http://${req.headers.host}`)
+        const serviceFilter = url.searchParams.get('service')
+        
+        // For now, just return connected peers
+        // TODO: Add service announcement/discovery via GossipSub
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          peers: node.getConnectedPeers().map(peerId => ({
+            peerId,
+            // TODO: Add service metadata when implemented
+            services: serviceFilter ? [] : undefined
+          }))
+        }))
+        return
+      }
+      
       if (req.method === 'POST' && req.url === '/send') {
         let body = ''
         req.on('data', chunk => body += chunk)

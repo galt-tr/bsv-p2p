@@ -9,6 +9,8 @@ import { join } from 'path'
 
 const program = new Command()
 
+const API_PORT = 4002 // Daemon API port
+
 function getDataDir(): string {
   const dir = join(homedir(), '.bsv-p2p')
   if (!existsSync(dir)) {
@@ -46,6 +48,30 @@ function isDaemonRunning(): { running: boolean; pid?: number } {
     // Process not running, clean up stale pid file
     unlinkSync(pidFile)
     return { running: false }
+  }
+}
+
+async function apiCall(method: string, path: string, body?: any): Promise<any> {
+  const url = `http://127.0.0.1:${API_PORT}${path}`
+  
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined
+    })
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: response.statusText }))
+      throw new Error(error.error || `HTTP ${response.status}`)
+    }
+    
+    return await response.json()
+  } catch (err: any) {
+    if (err.code === 'ECONNREFUSED') {
+      throw new Error('Daemon not running. Start with: bsv-p2p daemon start')
+    }
+    throw err
   }
 }
 
@@ -128,15 +154,22 @@ daemonCmd
 daemonCmd
   .command('status')
   .description('Check daemon status')
-  .action(() => {
+  .action(async () => {
     const status = isDaemonRunning()
     
     console.log(chalk.bold('\n🔌 BSV P2P Daemon Status\n'))
     
     if (status.running) {
-      console.log(`${chalk.green('●')} Running (PID: ${status.pid})`)
-      console.log(`${chalk.gray('Data dir:')} ${getDataDir()}`)
-      console.log(`${chalk.gray('Logs:')} ${getLogFile()}`)
+      try {
+        const daemonStatus = await apiCall('GET', '/status')
+        console.log(`${chalk.green('●')} Running (PID: ${status.pid})`)
+        console.log(`${chalk.gray('Peer ID:')} ${daemonStatus.peerId}`)
+        console.log(`${chalk.gray('Relay:')} ${daemonStatus.relayAddress || 'not connected'}`)
+        console.log(`${chalk.gray('Connected peers:')} ${daemonStatus.connectedPeers}`)
+        console.log(`${chalk.gray('Data dir:')} ${getDataDir()}`)
+      } catch (err: any) {
+        console.log(`${chalk.green('●')} Running (PID: ${status.pid}) - ${chalk.red('API unreachable')}`)
+      }
     } else {
       console.log(`${chalk.red('○')} Not running`)
       console.log(chalk.gray('Start with: bsv-p2p daemon start'))
@@ -175,17 +208,33 @@ const peersCmd = program.command('peers')
 
 peersCmd
   .command('list')
-  .description('List known peers')
-  .action(() => {
-    // TODO: Connect to daemon and get peer list
-    console.log(chalk.yellow('Not yet implemented - daemon IPC required'))
+  .description('List connected peers')
+  .action(async () => {
+    try {
+      const result = await apiCall('GET', '/peers')
+      
+      if (result.peers.length === 0) {
+        console.log(chalk.yellow('\nNo connected peers'))
+        console.log(chalk.gray('Connect to peers with: bsv-p2p peers connect <multiaddr>\n'))
+        return
+      }
+      
+      console.log(chalk.bold(`\n👥 Connected Peers (${result.peers.length})\n`))
+      result.peers.forEach((peer: any, i: number) => {
+        console.log(`${chalk.cyan((i + 1) + '.')} ${peer.peerId}`)
+      })
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
   })
 
 peersCmd
   .command('connect <multiaddr>')
-  .description('Connect to a peer')
-  .action((multiaddr) => {
-    console.log(chalk.yellow('Not yet implemented - daemon IPC required'))
+  .description('Connect to a peer by multiaddr')
+  .action(async (multiaddr) => {
+    console.log(chalk.yellow('Direct peer connection via CLI not yet implemented'))
+    console.log(chalk.gray('Use the daemon API directly or wait for implementation'))
   })
 
 // ============ CHANNELS COMMANDS ============
@@ -195,22 +244,223 @@ const channelsCmd = program.command('channels')
 channelsCmd
   .command('list')
   .description('List all payment channels')
-  .action(() => {
-    console.log(chalk.yellow('Not yet implemented'))
+  .option('-s, --state <state>', 'Filter by state (pending, open, closing, closed)')
+  .action(async (options) => {
+    try {
+      const result = await apiCall('GET', '/channels')
+      let channels = result.channels || []
+      
+      if (options.state) {
+        channels = channels.filter((c: any) => c.state === options.state)
+      }
+      
+      if (channels.length === 0) {
+        console.log(chalk.yellow('\nNo channels found'))
+        console.log(chalk.gray('Open a channel with: bsv-p2p channels open <peerId> <satoshis>\n'))
+        return
+      }
+      
+      console.log(chalk.bold(`\n💰 Payment Channels (${channels.length})\n`))
+      channels.forEach((ch: any) => {
+        const stateColor = ch.state === 'open' ? 'green' : ch.state === 'pending' ? 'yellow' : 'gray'
+        console.log(chalk.bold(`ID: ${ch.id.substring(0, 16)}...`))
+        console.log(`  ${chalk.gray('State:')} ${chalk[stateColor](ch.state)}`)
+        console.log(`  ${chalk.gray('Peer:')} ${ch.remotePeerId.substring(0, 32)}...`)
+        console.log(`  ${chalk.gray('Capacity:')} ${ch.capacity} sats`)
+        console.log(`  ${chalk.gray('Local balance:')} ${ch.localBalance} sats`)
+        console.log(`  ${chalk.gray('Remote balance:')} ${ch.remoteBalance} sats`)
+        console.log(`  ${chalk.gray('Sequence:')} ${ch.sequenceNumber}`)
+        console.log()
+      })
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
   })
 
 channelsCmd
   .command('open <peerId> <satoshis>')
   .description('Open a payment channel with a peer')
-  .action((peerId, satoshis) => {
-    console.log(chalk.yellow('Not yet implemented'))
+  .option('-k, --pubkey <pubkey>', 'Remote peer BSV public key')
+  .action(async (peerId, satoshis, options) => {
+    try {
+      const capacity = parseInt(satoshis, 10)
+      
+      if (!options.pubkey) {
+        console.error(chalk.red('Error: --pubkey required'))
+        console.log(chalk.gray('Usage: bsv-p2p channels open <peerId> <satoshis> --pubkey <remotePubKey>'))
+        return
+      }
+      
+      console.log(chalk.gray(`Opening channel with ${peerId.substring(0, 32)}...`))
+      console.log(chalk.gray(`Capacity: ${capacity} satoshis`))
+      
+      const result = await apiCall('POST', '/channel/open', {
+        peerId,
+        remotePubKey: options.pubkey,
+        capacity
+      })
+      
+      console.log(chalk.green(`\n✓ Channel opened`))
+      console.log(`  ${chalk.gray('Channel ID:')} ${result.channelId}`)
+      console.log(`  ${chalk.gray('State:')} ${result.state}`)
+      console.log(`  ${chalk.gray('Capacity:')} ${result.capacity} sats`)
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`\nError: ${err.message}`))
+    }
   })
 
 channelsCmd
   .command('close <channelId>')
   .description('Close a payment channel')
-  .action((channelId) => {
-    console.log(chalk.yellow('Not yet implemented'))
+  .option('-f, --force', 'Force close (unilateral)')
+  .action(async (channelId, options) => {
+    try {
+      console.log(chalk.gray(`Closing channel ${channelId.substring(0, 16)}...`))
+      
+      const result = await apiCall('POST', '/channel/close', {
+        channelId,
+        force: options.force || false
+      })
+      
+      console.log(chalk.green(`\n✓ Channel close initiated`))
+      console.log(`  ${chalk.gray('Type:')} ${options.force ? 'force' : 'cooperative'}`)
+      if (result.txid) {
+        console.log(`  ${chalk.gray('TX ID:')} ${result.txid}`)
+      }
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`\nError: ${err.message}`))
+    }
+  })
+
+channelsCmd
+  .command('info <channelId>')
+  .description('Show detailed channel information')
+  .action(async (channelId) => {
+    try {
+      const result = await apiCall('GET', '/channels')
+      const channel = result.channels.find((c: any) => c.id.startsWith(channelId))
+      
+      if (!channel) {
+        console.error(chalk.red(`Channel not found: ${channelId}`))
+        return
+      }
+      
+      console.log(chalk.bold(`\n💰 Channel Details\n`))
+      console.log(`${chalk.gray('ID:')} ${channel.id}`)
+      console.log(`${chalk.gray('State:')} ${channel.state}`)
+      console.log(`${chalk.gray('Local peer:')} ${channel.localPeerId}`)
+      console.log(`${chalk.gray('Remote peer:')} ${channel.remotePeerId}`)
+      console.log(`${chalk.gray('Capacity:')} ${channel.capacity} sats`)
+      console.log(`${chalk.gray('Local balance:')} ${channel.localBalance} sats`)
+      console.log(`${chalk.gray('Remote balance:')} ${channel.remoteBalance} sats`)
+      console.log(`${chalk.gray('Sequence number:')} ${channel.sequenceNumber}`)
+      console.log(`${chalk.gray('nLockTime:')} ${channel.nLockTime} (${new Date(channel.nLockTime * 1000).toLocaleString()})`)
+      console.log(`${chalk.gray('Created:')} ${new Date(channel.createdAt).toLocaleString()}`)
+      console.log(`${chalk.gray('Updated:')} ${new Date(channel.updatedAt).toLocaleString()}`)
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
+  })
+
+channelsCmd
+  .command('balance')
+  .description('Show total balance across all channels')
+  .action(async () => {
+    try {
+      const result = await apiCall('GET', '/channels')
+      const channels = result.channels || []
+      
+      const openChannels = channels.filter((c: any) => c.state === 'open')
+      const totalCapacity = channels.reduce((sum: number, c: any) => sum + c.capacity, 0)
+      const totalLocal = channels.reduce((sum: number, c: any) => sum + c.localBalance, 0)
+      const totalRemote = channels.reduce((sum: number, c: any) => sum + c.remoteBalance, 0)
+      
+      console.log(chalk.bold('\n💰 Channel Balances\n'))
+      console.log(`${chalk.gray('Total channels:')} ${channels.length} (${openChannels.length} open)`)
+      console.log(`${chalk.gray('Total capacity:')} ${totalCapacity} sats`)
+      console.log(`${chalk.gray('Total local balance:')} ${totalLocal} sats`)
+      console.log(`${chalk.gray('Total remote balance:')} ${totalRemote} sats`)
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
+  })
+
+// ============ SERVICES COMMANDS ============
+const servicesCmd = program.command('services')
+  .description('Discover and manage services')
+
+servicesCmd
+  .command('list')
+  .description('List available services')
+  .option('-s, --service <name>', 'Filter by service name')
+  .action(async (options) => {
+    try {
+      const query = options.service ? `?service=${options.service}` : ''
+      const result = await apiCall('GET', `/discover${query}`)
+      
+      if (result.peers.length === 0) {
+        console.log(chalk.yellow('\nNo services found'))
+        return
+      }
+      
+      console.log(chalk.bold(`\n🔍 Discovered Services (${result.peers.length} peers)\n`))
+      result.peers.forEach((peer: any, i: number) => {
+        console.log(`${chalk.cyan((i + 1) + '.')} ${peer.peerId}`)
+        if (peer.services) {
+          peer.services.forEach((svc: any) => {
+            console.log(`    ${svc.id}: ${svc.name} (${svc.pricing?.baseSatoshis || 0} sats)`)
+          })
+        }
+      })
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
+  })
+
+// ============ SEND COMMAND ============
+program
+  .command('send <peerId> <message>')
+  .description('Send a direct message to a peer')
+  .action(async (peerId, message) => {
+    try {
+      console.log(chalk.gray(`Sending message to ${peerId.substring(0, 32)}...`))
+      
+      const result = await apiCall('POST', '/send', { peerId, message })
+      
+      console.log(chalk.green('\n✓ Message sent'))
+      console.log(`  ${chalk.gray('From:')} ${result.from}`)
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`\nError: ${err.message}`))
+    }
+  })
+
+// ============ REQUEST COMMAND ============
+program
+  .command('request <peerId> <service>')
+  .description('Request a paid service from a peer')
+  .option('-d, --data <json>', 'Service input data (JSON)', '{}')
+  .option('-c, --channel <channelId>', 'Use specific channel for payment')
+  .option('-m, --max-payment <sats>', 'Maximum payment willing to make', '1000')
+  .action(async (peerId, service, options) => {
+    try {
+      const input = JSON.parse(options.data)
+      const maxPayment = parseInt(options.maxPayment, 10)
+      
+      console.log(chalk.gray(`Requesting service "${service}" from ${peerId.substring(0, 32)}...`))
+      console.log(chalk.gray(`Max payment: ${maxPayment} sats`))
+      
+      console.log(chalk.yellow('\nPaid service requests not yet fully implemented'))
+      console.log(chalk.gray('This requires channel payment integration'))
+      console.log(chalk.gray('Use the daemon API directly or wait for implementation'))
+    } catch (err: any) {
+      console.error(chalk.red(`\nError: ${err.message}`))
+    }
   })
 
 // ============ CONFIG COMMAND ============

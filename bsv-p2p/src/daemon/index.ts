@@ -538,21 +538,117 @@ ${msg.memo ? `Memo: ${msg.memo}` : ''}`
         return
       }
       
-      // Discover peers (returns connected peers for now; could be extended with service discovery)
+      // Discover peers (with optional service filter)
       if (req.method === 'GET' && (req.url === '/discover' || req.url?.startsWith('/discover?'))) {
         const url = new URL(req.url!, `http://${req.headers.host}`)
         const serviceFilter = url.searchParams.get('service')
         
-        // For now, just return connected peers
-        // TODO: Add service announcement/discovery via GossipSub
-        res.writeHead(200)
-        res.end(JSON.stringify({
-          peers: node.getConnectedPeers().map(peerId => ({
-            peerId,
-            // TODO: Add service metadata when implemented
-            services: serviceFilter ? [] : undefined
+        try {
+          const peers = await node.discoverPeers({ service: serviceFilter ?? undefined })
+          
+          res.writeHead(200)
+          res.end(JSON.stringify({
+            peers: peers.map(peer => ({
+              peerId: peer.peerId,
+              multiaddrs: peer.multiaddrs,
+              services: peer.services ?? [],
+              bsvIdentityKey: peer.bsvIdentityKey,
+              lastSeen: peer.lastSeen
+            })),
+            query: serviceFilter ? { service: serviceFilter } : {}
           }))
-        }))
+        } catch (err: any) {
+          log('ERROR', 'API', `Discovery failed: ${err.message}`)
+          res.writeHead(500)
+          res.end(JSON.stringify({ error: err.message }))
+        }
+        return
+      }
+      
+      // Register a service
+      if (req.method === 'POST' && req.url === '/services') {
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', async () => {
+          try {
+            const service = JSON.parse(body)
+            
+            if (!service.id || !service.name || service.price === undefined || !service.currency) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Service must have id, name, price, and currency' }))
+              return
+            }
+            
+            log('INFO', 'API', `Registering service: ${service.id} (${service.name})`)
+            node.registerService(service)
+            
+            res.writeHead(200)
+            res.end(JSON.stringify({ 
+              success: true,
+              service,
+              message: 'Service registered and will be announced via GossipSub'
+            }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Service registration failed: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+      
+      // Unregister a service
+      if (req.method === 'DELETE' && req.url?.startsWith('/services/')) {
+        const serviceId = req.url.substring('/services/'.length)
+        
+        try {
+          log('INFO', 'API', `Unregistering service: ${serviceId}`)
+          node.unregisterService(serviceId)
+          
+          res.writeHead(200)
+          res.end(JSON.stringify({ 
+            success: true,
+            serviceId,
+            message: 'Service unregistered'
+          }))
+        } catch (err: any) {
+          log('ERROR', 'API', `Service unregistration failed: ${err.message}`)
+          res.writeHead(500)
+          res.end(JSON.stringify({ error: err.message }))
+        }
+        return
+      }
+      
+      // Get our registered services
+      if (req.method === 'GET' && req.url === '/services') {
+        try {
+          const services = node.getServices()
+          
+          res.writeHead(200)
+          res.end(JSON.stringify({
+            services,
+            count: services.length
+          }))
+        } catch (err: any) {
+          log('ERROR', 'API', `Failed to get services: ${err.message}`)
+          res.writeHead(500)
+          res.end(JSON.stringify({ error: err.message }))
+        }
+        return
+      }
+      
+      // Get discovery service stats
+      if (req.method === 'GET' && req.url === '/discovery/stats') {
+        try {
+          const stats = node.getDiscoveryStats()
+          
+          res.writeHead(200)
+          res.end(JSON.stringify(stats))
+        } catch (err: any) {
+          log('ERROR', 'API', `Failed to get discovery stats: ${err.message}`)
+          res.writeHead(500)
+          res.end(JSON.stringify({ error: err.message }))
+        }
         return
       }
       

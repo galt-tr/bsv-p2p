@@ -89,12 +89,32 @@ daemonCmd
   .description('Start the P2P daemon')
   .option('-f, --foreground', 'Run in foreground (don\'t daemonize)')
   .option('-p, --port <port>', 'Port to listen on', '4001')
+  .option('--skip-setup', 'Skip first-run setup wizard')
   .action(async (options) => {
     const status = isDaemonRunning()
     
     if (status.running) {
       console.log(chalk.yellow(`Daemon already running (PID: ${status.pid})`))
       return
+    }
+    
+    // Check for first run
+    const configFile = getConfigFile()
+    const isFirstRun = !existsSync(configFile)
+    
+    if (isFirstRun && !options.skipSetup) {
+      console.log(chalk.bold('\n🎉 Welcome to BSV P2P!\n'))
+      console.log('It looks like this is your first time running bsv-p2p.')
+      console.log('Let\'s get you set up.\n')
+      
+      // Offer to run setup wizard
+      console.log(chalk.yellow('Run setup wizard? (recommended)'))
+      console.log(chalk.gray('You can also run: bsv-p2p setup'))
+      console.log()
+      console.log(chalk.gray('Starting daemon without setup in 5 seconds...'))
+      console.log(chalk.gray('Press Ctrl+C to cancel and run setup first'))
+      
+      await new Promise(resolve => setTimeout(resolve, 5000))
     }
     
     if (options.foreground) {
@@ -123,11 +143,21 @@ daemonCmd
       
       const newStatus = isDaemonRunning()
       if (newStatus.running) {
-        console.log(chalk.green(`Daemon started (PID: ${newStatus.pid})`))
-        console.log(chalk.gray(`Logs: ${logFile}`))
+        console.log(chalk.green(`\n✓ Daemon started (PID: ${newStatus.pid})`))
+        console.log(chalk.gray(`  Logs: ${logFile}`))
+        
+        if (isFirstRun) {
+          console.log()
+          console.log(chalk.bold('Next steps:'))
+          console.log(chalk.gray('  • Run') + chalk.cyan(' bsv-p2p status') + chalk.gray(' to check your setup'))
+          console.log(chalk.gray('  • Run') + chalk.cyan(' bsv-p2p doctor') + chalk.gray(' to diagnose any issues'))
+          console.log(chalk.gray('  • Read the docs:') + chalk.cyan(' https://github.com/galt-tr/bsv-p2p'))
+        }
+        console.log()
       } else {
-        console.log(chalk.red('Failed to start daemon. Check logs:'))
+        console.log(chalk.red('\n✗ Failed to start daemon. Check logs:'))
         console.log(chalk.gray(`  tail -f ${logFile}`))
+        console.log()
       }
     }
   })

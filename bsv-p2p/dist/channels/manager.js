@@ -9,11 +9,13 @@
 import { EventEmitter } from 'events';
 import { v4 as uuid } from 'uuid';
 import { DEFAULT_CHANNEL_CONFIG } from './types.js';
+import { ChannelStorage } from './storage.js';
 export class ChannelManager extends EventEmitter {
     config;
     privateKey;
     publicKey;
     channels = new Map();
+    storage;
     broadcastTx;
     constructor(managerConfig) {
         super();
@@ -24,6 +26,41 @@ export class ChannelManager extends EventEmitter {
             ...DEFAULT_CHANNEL_CONFIG,
             ...managerConfig
         };
+        // Initialize storage
+        this.storage = new ChannelStorage(managerConfig.dbPath);
+        // Load existing channels from database
+        this.loadChannels();
+    }
+    /**
+     * Load channels from persistent storage
+     */
+    loadChannels() {
+        const channels = this.storage.getAllChannels();
+        for (const channel of channels) {
+            this.channels.set(channel.id, channel);
+        }
+        console.log(`[ChannelManager] Loaded ${channels.length} channels from database`);
+    }
+    /**
+     * Save a channel to persistent storage
+     */
+    saveChannel(channel) {
+        this.storage.saveChannel(channel);
+    }
+    /**
+     * Record a payment in the database
+     */
+    recordPayment(channelId, amount, direction, sequence, signature) {
+        const record = {
+            id: uuid(),
+            channelId,
+            amount,
+            direction,
+            sequence,
+            signature,
+            timestamp: Date.now()
+        };
+        this.storage.recordPayment(record);
     }
     /**
      * Create a new channel (initiator side)
@@ -56,6 +93,7 @@ export class ChannelManager extends EventEmitter {
             updatedAt: now
         };
         this.channels.set(channel.id, channel);
+        this.saveChannel(channel);
         this.emit('channel:created', channel);
         return channel;
     }
@@ -80,6 +118,7 @@ export class ChannelManager extends EventEmitter {
             updatedAt: now
         };
         this.channels.set(channel.id, channel);
+        this.saveChannel(channel);
         this.emit('channel:accepted', channel);
         return channel;
     }
@@ -93,6 +132,7 @@ export class ChannelManager extends EventEmitter {
         channel.fundingTxId = txId;
         channel.fundingOutputIndex = outputIndex;
         channel.updatedAt = Date.now();
+        this.saveChannel(channel);
     }
     /**
      * Mark channel as open (after funding tx is confirmed)
@@ -106,6 +146,7 @@ export class ChannelManager extends EventEmitter {
         }
         channel.state = 'open';
         channel.updatedAt = Date.now();
+        this.saveChannel(channel);
         this.emit('channel:opened', channel);
     }
     /**
@@ -128,12 +169,16 @@ export class ChannelManager extends EventEmitter {
         }
         // TODO: Verify signature
         // Update channel state
-        // Note: For incoming payments, newLocalBalance is THEIR new balance (becomes our remote)
-        // We need to swap the perspective
-        channel.localBalance = payment.newRemoteBalance; // Their remote is our local
-        channel.remoteBalance = payment.newLocalBalance; // Their local is our remote
+        // Note: For incoming payments, the payment contains the SENDER's perspective:
+        //   payment.newLocalBalance = sender's new local balance
+        //   payment.newRemoteBalance = sender's new remote balance (which is our new local balance)
+        // So we swap them to get our perspective:
+        channel.remoteBalance = payment.newLocalBalance; // Sender's local is our remote
+        channel.localBalance = payment.newRemoteBalance; // Sender's remote is our local
         channel.sequenceNumber = payment.newSequenceNumber;
         channel.updatedAt = Date.now();
+        this.saveChannel(channel);
+        this.recordPayment(channel.id, payment.amount, 'received', payment.newSequenceNumber, payment.signature);
         this.emit('channel:payment_received', { channel, payment });
     }
     /**
@@ -169,6 +214,8 @@ export class ChannelManager extends EventEmitter {
         channel.remoteBalance = newRemoteBalance;
         channel.sequenceNumber = newSequenceNumber;
         channel.updatedAt = Date.now();
+        this.saveChannel(channel);
+        this.recordPayment(channelId, amount, 'sent', newSequenceNumber, signature);
         this.emit('channel:payment_sent', { channel, payment });
         return payment;
     }
@@ -184,6 +231,7 @@ export class ChannelManager extends EventEmitter {
         }
         channel.state = 'closing';
         channel.updatedAt = Date.now();
+        this.saveChannel(channel);
         // TODO: Sign close request
         const signature = ''; // Placeholder
         const closeRequest = {
@@ -206,7 +254,14 @@ export class ChannelManager extends EventEmitter {
             throw new Error(`Channel ${channelId} not found`);
         channel.state = 'closed';
         channel.updatedAt = Date.now();
+        this.saveChannel(channel);
         this.emit('channel:closed', { channel, closeTxId });
+    }
+    /**
+     * Get payment history for a channel
+     */
+    getPaymentHistory(channelId) {
+        return this.storage.getPayments(channelId);
     }
     /**
      * Get a channel by ID
@@ -237,5 +292,182 @@ export class ChannelManager extends EventEmitter {
      */
     getTotalBalance() {
         return this.getOpenChannels().reduce((sum, c) => sum + c.localBalance, 0);
+    }
+    // ============================================================
+    // Real BSV Transaction Methods
+    // ============================================================
+    /**
+     * Fund a channel with a real UTXO
+     *
+     * Creates and broadcasts a funding transaction that locks funds in a 2-of-2 multisig.
+     *
+     * @param channelId - The channel to fund
+     * @param utxo - The UTXO to spend
+     * @param fee - Transaction fee in satoshis (default: 200)
+     * @returns The funding transaction ID
+     */
+    async fundChannelWithUTXO(channelId, utxo, fee = 200) {
+        const channel = this.channels.get(channelId);
+        if (!channel)
+            throw new Error(`Channel ${channelId} not found`);
+        if (channel.state !== 'pending') {
+            throw new Error(`Cannot fund channel in state ${channel.state}`);
+        }
+        // Import required modules
+        const { PrivateKey, PublicKey } = await import('@bsv/sdk');
+        const { createFundingTransaction } = await import('./multisig.js');
+        const { broadcastTransaction } = await import('./bsv-services.js');
+        // Create the funding transaction
+        const privateKey = PrivateKey.fromHex(this.privateKey);
+        const localPubKey = PublicKey.fromString(channel.localPubKey);
+        const remotePubKey = PublicKey.fromString(channel.remotePubKey);
+        const fundingTx = await createFundingTransaction({
+            utxo,
+            privateKey,
+            localPubKey,
+            remotePubKey,
+            capacity: channel.capacity,
+            fee
+        });
+        // Broadcast the transaction
+        const txHex = fundingTx.toHex();
+        let txid;
+        if (this.broadcastTx) {
+            txid = await this.broadcastTx(txHex);
+        }
+        else {
+            txid = await broadcastTransaction(txHex);
+        }
+        // Update channel with funding details
+        this.setFundingTx(channelId, txid, 0); // Output 0 is always the multisig
+        return txid;
+    }
+    /**
+     * Verify a funding transaction using SPV
+     *
+     * Checks that the funding tx is confirmed and the merkle proof is valid.
+     *
+     * @param channelId - The channel to verify
+     * @returns true if verified, false otherwise
+     */
+    async verifyFundingTx(channelId) {
+        const channel = this.channels.get(channelId);
+        if (!channel)
+            throw new Error(`Channel ${channelId} not found`);
+        if (!channel.fundingTxId) {
+            throw new Error('Channel has no funding transaction');
+        }
+        const { verifyTransaction } = await import('./bsv-services.js');
+        return await verifyTransaction(channel.fundingTxId);
+    }
+    /**
+     * Create a signed commitment transaction for a payment
+     *
+     * @param channelId - The channel
+     * @param amount - Payment amount in satoshis
+     * @returns The payment object with a real signature
+     */
+    async createSignedPayment(channelId, amount) {
+        const channel = this.channels.get(channelId);
+        if (!channel)
+            throw new Error(`Channel ${channelId} not found`);
+        if (channel.state !== 'open') {
+            throw new Error(`Cannot pay on channel in state ${channel.state}`);
+        }
+        if (!channel.fundingTxId) {
+            throw new Error('Channel has no funding transaction');
+        }
+        // Check sufficient balance
+        if (amount > channel.localBalance) {
+            throw new Error(`Insufficient balance: have ${channel.localBalance}, need ${amount}`);
+        }
+        // Import required modules
+        const { PrivateKey, PublicKey, Transaction } = await import('@bsv/sdk');
+        const { createMultisigLockingScript, createCommitmentTransaction, signCommitment } = await import('./multisig.js');
+        const { fetchTransaction } = await import('./bsv-services.js');
+        // Fetch the funding transaction
+        const fundingTxInfo = await fetchTransaction(channel.fundingTxId);
+        const fundingTx = Transaction.fromHex(fundingTxInfo.hex);
+        const newSequenceNumber = channel.sequenceNumber + 1;
+        const newLocalBalance = channel.localBalance - amount;
+        const newRemoteBalance = channel.remoteBalance + amount;
+        // Create the commitment transaction
+        const localPubKey = PublicKey.fromString(channel.localPubKey);
+        const remotePubKey = PublicKey.fromString(channel.remotePubKey);
+        const multisigScript = createMultisigLockingScript(localPubKey, remotePubKey);
+        const commitmentTx = createCommitmentTransaction({
+            fundingTx,
+            fundingVout: channel.fundingOutputIndex ?? 0,
+            multisigScript,
+            capacity: channel.capacity,
+            localBalance: newLocalBalance,
+            remoteBalance: newRemoteBalance,
+            localPubKey,
+            remotePubKey,
+            lockTime: channel.nLockTime,
+            sequence: newSequenceNumber
+        });
+        // Sign our half
+        const privateKey = PrivateKey.fromHex(this.privateKey);
+        const { signature } = signCommitment(commitmentTx, 0, privateKey, multisigScript, channel.capacity);
+        const payment = {
+            channelId,
+            amount,
+            newSequenceNumber,
+            newLocalBalance,
+            newRemoteBalance,
+            signature: Buffer.from(signature).toString('hex'),
+            timestamp: Date.now()
+        };
+        // Update local state
+        channel.localBalance = newLocalBalance;
+        channel.remoteBalance = newRemoteBalance;
+        channel.sequenceNumber = newSequenceNumber;
+        channel.updatedAt = Date.now();
+        this.saveChannel(channel);
+        this.recordPayment(channelId, amount, 'sent', newSequenceNumber, payment.signature);
+        this.emit('channel:payment_sent', { channel, payment });
+        return payment;
+    }
+    /**
+     * Verify a counterparty's payment signature
+     */
+    async verifyPaymentSignature(payment) {
+        const channel = this.channels.get(payment.channelId);
+        if (!channel)
+            return false;
+        if (!payment.signature)
+            return false;
+        try {
+            const { PublicKey, Transaction } = await import('@bsv/sdk');
+            const { createMultisigLockingScript, createCommitmentTransaction, verifySignature } = await import('./multisig.js');
+            const { fetchTransaction } = await import('./bsv-services.js');
+            // Fetch the funding transaction
+            const fundingTxInfo = await fetchTransaction(channel.fundingTxId);
+            const fundingTx = Transaction.fromHex(fundingTxInfo.hex);
+            // Recreate the commitment transaction
+            const localPubKey = PublicKey.fromString(channel.localPubKey);
+            const remotePubKey = PublicKey.fromString(channel.remotePubKey);
+            const multisigScript = createMultisigLockingScript(localPubKey, remotePubKey);
+            // Note: From counterparty's perspective, local/remote are swapped
+            const commitmentTx = createCommitmentTransaction({
+                fundingTx,
+                fundingVout: channel.fundingOutputIndex ?? 0,
+                multisigScript,
+                capacity: channel.capacity,
+                localBalance: payment.newRemoteBalance, // Their local is our remote
+                remoteBalance: payment.newLocalBalance, // Their remote is our local
+                localPubKey: remotePubKey, // Their local pubkey
+                remotePubKey: localPubKey, // Their remote is us
+                lockTime: channel.nLockTime,
+                sequence: payment.newSequenceNumber
+            });
+            const signatureBytes = Buffer.from(payment.signature, 'hex');
+            return verifySignature(commitmentTx, 0, remotePubKey, Array.from(signatureBytes), multisigScript, channel.capacity);
+        }
+        catch (err) {
+            console.error('Signature verification failed:', err);
+            return false;
+        }
     }
 }

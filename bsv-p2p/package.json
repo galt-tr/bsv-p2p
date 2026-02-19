@@ -5,12 +5,14 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "bsv-p2p": "dist/cli/index.js"
+    "bsv-p2p": "dist/cli/index.js",
+    "bsv-p2p-service": "dist/cli/service-manager.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/cli/index.ts",
     "cli": "tsx src/cli/index.ts",
+    "services": "tsx src/cli/service-manager.ts",
     "daemon": "tsx src/daemon/index.ts",
     "daemon:install": "bash scripts/install-service.sh install",
     "daemon:uninstall": "bash scripts/install-service.sh uninstall",

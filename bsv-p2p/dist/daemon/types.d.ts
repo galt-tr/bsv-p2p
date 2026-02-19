@@ -7,6 +7,8 @@ export interface P2PNodeConfig {
     enableMdns?: boolean;
     /** Gateway webhook configuration for agent wake */
     gateway?: GatewayConfig;
+    /** Use ephemeral key instead of loading from disk (useful for tests) */
+    ephemeralKey?: boolean;
 }
 export interface PeerInfo {
     peerId: string;
@@ -49,4 +51,4 @@ export declare const PROTOCOLS: {
     readonly CHANNEL: "/openclaw/channel/1.0.0";
     readonly HANDSHAKE: "/openclaw/handshake/1.0.0";
 };
-export declare const DEFAULT_CONFIG: Required<P2PNodeConfig>;
+export declare const DEFAULT_CONFIG: Required<Omit<P2PNodeConfig, 'gateway'>>;

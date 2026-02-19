@@ -11,7 +11,8 @@ import { EventEmitter } from 'events'
 import { PrivateKey, PublicKey, Transaction } from '@bsv/sdk'
 import { P2PNode } from '../daemon/node.js'
 import { ChannelManager } from './manager.js'
-import { Channel, ChannelPayment, ServiceInfo } from './types.js'
+import { Channel, ChannelPayment } from './types.js'
+import { ServiceInfo } from '../daemon/types.js'
 import {
   ChannelMessage,
   ChannelMessageType,

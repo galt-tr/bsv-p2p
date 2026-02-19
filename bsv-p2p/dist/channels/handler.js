@@ -8,7 +8,7 @@
  */
 import { EventEmitter } from 'events';
 import { ChannelManager } from './manager.js';
-import { ChannelMessageType, deserializeMessage } from './protocol.js';
+import { ChannelMessageType, deserializeMessage } from './wire.js';
 import { createCommitmentTransaction, createSettlementTransaction } from './transactions.js';
 import { v4 as uuid } from 'uuid';
 export class ChannelHandler extends EventEmitter {

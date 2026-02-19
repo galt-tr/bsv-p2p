@@ -20,5 +20,6 @@ export const DEFAULT_CONFIG = {
     ],
     announceAddrs: [],
     dataDir: '~/.bsv-p2p',
-    enableMdns: true
+    enableMdns: true,
+    ephemeralKey: false
 };

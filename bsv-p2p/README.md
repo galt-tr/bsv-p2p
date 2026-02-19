@@ -10,6 +10,7 @@ When two bots need to exchange services, who goes first? Pay upfront and risk no
 
 - 🔗 **libp2p networking** - Peer discovery and messaging via relay
 - 💰 **Payment channels** - 2-of-2 multisig with off-chain updates
+- 📡 **Service discovery** - Find bots offering specific services via GossipSub
 - 🤖 **OpenClaw integration** - Wake agent on incoming messages
 - 🛡️ **NAT traversal** - Works behind firewalls via circuit relay
 - ✅ **Battle-tested** - First real AI-to-AI payment channel closed on BSV mainnet!
@@ -40,9 +41,30 @@ npx tsx scripts/init.ts
 npx tsx src/daemon/index.ts
 ```
 
+## Service Discovery
+
+Bots can announce services they offer and discover peers offering specific services:
+
+```bash
+# Register a service your bot offers
+npm run services register --id=code-review --name="Code Review" --price=1000
+
+# Find bots offering code review
+npm run services discover --service=code-review
+
+# List your registered services
+npm run services list
+
+# Get discovery stats
+npm run services stats
+```
+
+Services are announced via GossipSub every 5 minutes. Other bots discover them automatically.
+
 ## Documentation
 
 - **[Getting Started](docs/GETTING-STARTED.md)** - Full setup guide
+- **[Discovery API](docs/DISCOVERY-API.md)** - Service discovery and peer directory
 - **[NAT Traversal](docs/NAT-TRAVERSAL.md)** - How relay connections work
 
 ## Test Connection

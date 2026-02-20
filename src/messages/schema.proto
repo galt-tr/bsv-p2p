@@ -1,0 +1,170 @@
+syntax = "proto3";
+
+package bsvp2p;
+
+// Core message envelope
+message Envelope {
+  string id = 1;
+  string type = 2;
+  string from = 3;
+  string to = 4;
+  uint64 timestamp = 5;
+  bytes payload = 6;
+  bytes signature = 7;
+}
+
+// Announce presence
+message Announce {
+  string peer_id = 1;
+  string bsv_identity_key = 2;
+  repeated ServiceInfo services = 3;
+  repeated string multiaddrs = 4;
+  uint64 timestamp = 5;
+}
+
+// Service information
+message ServiceInfo {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  PricingInfo pricing = 4;
+  string version = 5;
+}
+
+// Pricing information
+message PricingInfo {
+  string currency = 1;
+  uint64 base_satoshis = 2;
+  uint64 per_unit = 3;
+  string unit = 4;
+}
+
+// Request message
+message Request {
+  string service = 1;
+  bytes input = 2;                  // JSON-encoded
+  map<string, string> meta = 3;
+  ChannelPayment payment = 4;       // Optional channel payment
+}
+
+// Channel payment update
+message ChannelPayment {
+  string type = 1;                  // "channel"
+  string channel_id = 2;
+  uint64 amount = 3;
+  ChannelUpdate update = 4;
+}
+
+// Channel state update
+message ChannelUpdate {
+  uint64 n_sequence = 1;
+  uint64 my_balance = 2;
+  uint64 peer_balance = 3;
+  bytes signature = 4;
+}
+
+// Quote response
+message Quote {
+  string request_id = 1;
+  string quote_id = 2;
+  PaymentTerms terms = 3;
+}
+
+// Payment terms
+message PaymentTerms {
+  string type = 1;                  // "direct" or "channel"
+  uint64 satoshis = 2;
+  string currency = 3;
+  PaymentDestination pay_to = 4;
+  uint64 expires_at = 5;
+  string channel_id = 6;            // If channel payment
+}
+
+// Payment destination
+message PaymentDestination {
+  string address = 1;
+  bytes script = 2;
+  string identity_key = 3;
+  string derivation_prefix = 4;
+}
+
+// Payment message
+message Payment {
+  string quote_id = 1;
+  bytes beef = 2;                   // BEEF transaction
+}
+
+// Response message
+message Response {
+  string request_id = 1;
+  bytes result = 2;                 // JSON-encoded
+  bool success = 3;
+  string error = 4;
+  ChannelPaymentAck payment_ack = 5;
+}
+
+// Channel payment acknowledgment
+message ChannelPaymentAck {
+  string channel_id = 1;
+  uint64 n_sequence = 2;
+  bytes counter_signature = 3;
+}
+
+// Reject message
+message Reject {
+  string request_id = 1;
+  string reason = 2;
+}
+
+// Error message
+message Error {
+  string code = 1;
+  string message = 2;
+  bytes details = 3;                // JSON-encoded
+}
+
+// Channel proposal
+message ChannelPropose {
+  string proposal_id = 1;
+  uint64 capacity = 2;
+  uint64 lock_time_hours = 3;
+  bytes my_pub_key = 4;
+  string funding_txid = 5;
+  uint32 funding_vout = 6;
+}
+
+// Channel accept
+message ChannelAccept {
+  string proposal_id = 1;
+  bytes my_pub_key = 2;
+  bytes signature = 3;
+}
+
+// Channel reject
+message ChannelReject {
+  string proposal_id = 1;
+  string reason = 2;
+}
+
+// Channel close
+message ChannelClose {
+  string channel_id = 1;
+  string type = 2;                  // "cooperative" or "force"
+  bytes final_tx = 3;
+  bytes my_signature = 4;
+}
+
+// Ping/Pong
+message Ping {
+  uint64 timestamp = 1;
+}
+
+message Pong {
+  uint64 request_timestamp = 1;
+  uint64 response_timestamp = 2;
+}
+
+// Discover request
+message Discover {
+  string service = 1;
+}

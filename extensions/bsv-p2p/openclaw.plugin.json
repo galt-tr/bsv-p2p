@@ -1,0 +1,113 @@
+{
+  "id": "bsv-p2p",
+  "name": "BSV P2P Payment Channels",
+  "version": "0.1.0",
+  "description": "Peer-to-peer messaging and payment channels for OpenClaw bots using libp2p and Bitcoin SV",
+  "author": "Galt",
+  "license": "MIT",
+  "openclaw": ">=1.0.0",
+  "main": "index.ts",
+  "config": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "number",
+          "description": "Port for libp2p to listen on",
+          "default": 4001
+        },
+        "relayAddress": {
+          "type": "string",
+          "description": "Multiaddr of relay server (optional)",
+          "default": ""
+        },
+        "bootstrapPeers": {
+          "type": "array",
+          "description": "List of bootstrap peer multiaddrs",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "walletPath": {
+          "type": "string",
+          "description": "Path to wallet database",
+          "default": "~/.bsv-p2p/wallet.db"
+        },
+        "bsvIdentityKey": {
+          "type": "string",
+          "description": "BSV identity private key (WIF format)",
+          "default": ""
+        },
+        "enableRelay": {
+          "type": "boolean",
+          "description": "Enable circuit relay v2",
+          "default": true
+        },
+        "enableMdns": {
+          "type": "boolean",
+          "description": "Enable mDNS peer discovery (local network)",
+          "default": false
+        },
+        "maxConnections": {
+          "type": "number",
+          "description": "Maximum number of peer connections",
+          "default": 50
+        }
+      }
+    },
+    "uiHints": {
+      "port": {
+        "label": "Listen Port",
+        "placeholder": "4001"
+      },
+      "relayAddress": {
+        "label": "Relay Server",
+        "placeholder": "/ip4/relay.example.com/tcp/4002/p2p/12D3KooW..."
+      },
+      "bootstrapPeers": {
+        "label": "Bootstrap Peers",
+        "placeholder": "Enter peer multiaddrs, one per line"
+      },
+      "walletPath": {
+        "label": "Wallet Database Path",
+        "placeholder": "~/.bsv-p2p/wallet.db"
+      },
+      "bsvIdentityKey": {
+        "label": "BSV Identity Key (WIF)",
+        "type": "password",
+        "placeholder": "L1abc..."
+      },
+      "enableRelay": {
+        "label": "Enable Circuit Relay"
+      },
+      "enableMdns": {
+        "label": "Enable Local Network Discovery"
+      },
+      "maxConnections": {
+        "label": "Max Peer Connections"
+      }
+    }
+  },
+  "capabilities": {
+    "tools": [
+      "p2p_discover",
+      "p2p_send",
+      "p2p_request",
+      "p2p_status",
+      "p2p_channels"
+    ],
+    "services": [
+      "bsv-p2p-node"
+    ]
+  },
+  "keywords": [
+    "bsv",
+    "bitcoin",
+    "p2p",
+    "libp2p",
+    "payment-channels",
+    "micropayments",
+    "messaging"
+  ]
+}

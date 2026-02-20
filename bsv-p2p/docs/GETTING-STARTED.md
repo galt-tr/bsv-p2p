@@ -239,13 +239,243 @@ The remote peer rejected your channel. Either:
 2. Verify Peer IDs are correct
 3. Check daemon logs for errors
 
-## Security Notes
+## Security & Key Management
 
-⚠️ **REGTEST ONLY** - This is experimental software. Use test keys only.
+### ⚠️ CRITICAL: Choose the Right Key Storage
 
-- Private keys in config are stored in plaintext
-- No real BSV transactions are broadcast yet
-- Payment channel security (signatures, timelocks) is not fully implemented
+Your private key controls **real money**. Choose the wrong storage method and you **will lose funds**.
+
+| Environment | Key Storage | Mainnet Ready? |
+|-------------|-------------|----------------|
+| **Testnet** (learning/dev) | Plaintext config | N/A (no real funds) |
+| **Mainnet** (<$100) | Environment variables | ⚠️ Acceptable |
+| **Mainnet** (>$100) | OS Keychain | ✅ **Required** |
+| **Mainnet** (>$1000) | Hardware HSM | ✅ **Strongly Recommended** |
+
+### Quick Security Checklist
+
+**Before deploying to mainnet:**
+
+- [ ] Read the full [Key Management Guide](./security/KEY-MANAGEMENT.md)
+- [ ] Understand the [threat model](./security/PRIVATE-KEY-STORAGE-AUDIT.md)
+- [ ] Choose appropriate key storage (see table above)
+- [ ] Set up encrypted backups (offline, not cloud)
+- [ ] **Test your recovery procedure** on a different machine
+- [ ] Fund wallet with small amount first ($1-5)
+- [ ] Monitor for suspicious activity
+
+### Testnet vs Mainnet
+
+**Testnet (Getting Started):**
+```bash
+# Plaintext keys are fine for testnet
+npx tsx scripts/init.ts --network testnet
+npx tsx src/daemon/index.ts
+```
+
+**Mainnet (Production):**
+```bash
+# NEVER use plaintext keys on mainnet
+npx tsx scripts/init.ts --network mainnet
+
+# Option 1: OS Keychain (Recommended)
+bsv-p2p config migrate-to-keychain
+bsv-p2p config check-security
+
+# Option 2: Environment Variables (Docker/CI)
+export BSV_PRIVATE_KEY="your-hex-key"
+bsv-p2p daemon start
+
+# Option 3: Encrypted Config (Headless)
+bsv-p2p config encrypt
+# Enter passphrase when prompted
+```
+
+### Key Storage Options
+
+#### 1. Plaintext Config (Testnet Only) ❌
+
+**File:** `~/.bsv-p2p/config.json`
+
+```json
+{
+  "bsvPrivateKey": "hex-key-here",
+  "bsvPublicKey": "hex-pubkey-here"
+}
+```
+
+**⚠️ WARNING:** Any process or user on your machine can read this file.  
+**USE ONLY FOR TESTNET. NEVER MAINNET.**
+
+#### 2. Environment Variables ⚠️
+
+**Setup:**
+```bash
+export BSV_PRIVATE_KEY="your-hex-key"
+bsv-p2p daemon start
+```
+
+**Pros:** Standard practice, Docker-friendly  
+**Cons:** Visible in process listing, logs, error dumps  
+**Verdict:** Acceptable for small amounts (<$100), better than plaintext
+
+**Docker Example:**
+```bash
+docker run -e BSV_PRIVATE_KEY="..." bsv-p2p:latest
+```
+
+#### 3. OS Keychain (Recommended) ✅
+
+**Platforms:** macOS Keychain, Linux Secret Service, Windows Credential Manager
+
+**Setup:**
+```bash
+# Linux: install dependency
+sudo apt install libsecret-1-dev  # Debian/Ubuntu
+sudo dnf install libsecret-devel  # Fedora
+
+# Migrate existing keys
+bsv-p2p config migrate-to-keychain
+
+# Verify
+bsv-p2p config check-security
+# ✅ Private key stored in OS keychain
+```
+
+**Pros:** 
+- OS-managed encryption
+- Automatic unlock on login
+- Per-application access control
+- Biometric authentication (macOS/Windows)
+
+**Cons:** 
+- Requires system dependencies (Linux)
+- GUI unlock needed on some systems
+- Docker setup more complex
+
+**Best for:** Production mainnet deployments
+
+#### 4. Encrypted Config File ✅
+
+**File:** `~/.bsv-p2p/config.enc` (replaces `config.json`)
+
+**Setup:**
+```bash
+bsv-p2p config encrypt
+# Enter passphrase: ********
+# Config encrypted with AES-256-GCM
+
+# Start daemon (prompts for passphrase)
+bsv-p2p daemon start
+
+# Or use environment variable
+export BSV_CONFIG_PASSPHRASE="your-passphrase"
+bsv-p2p daemon start
+```
+
+**Pros:**
+- Strong encryption (AES-256-GCM)
+- No external dependencies
+- Works in Docker/headless
+
+**Cons:**
+- User must enter passphrase each start (unless env var)
+- UX friction
+
+**Best for:** Headless servers, Docker without keychain access
+
+### Backup Your Key (CRITICAL)
+
+**Without backups, you lose everything.** No one can recover your key.
+
+```bash
+# Export key to secure location
+bsv-p2p config export-key --output ~/secure-usb/bsv-backup.txt
+
+# Secure the backup
+chmod 600 ~/secure-usb/bsv-backup.txt
+
+# Test recovery on different machine
+bsv-p2p config import-key --input ~/secure-usb/bsv-backup.txt
+```
+
+**✅ Do:**
+- Store on encrypted USB drive
+- Keep offline (not cloud)
+- Make 2-3 copies in different locations
+- Test recovery procedure
+
+**❌ Don't:**
+- Upload to Dropbox, Google Drive, iCloud
+- Email to yourself
+- Store in Git repository
+- Leave unencrypted
+
+**Recommended: GPG Encryption**
+```bash
+gpg --symmetric --cipher-algo AES256 ~/secure-usb/bsv-backup.txt
+# Creates bsv-backup.txt.gpg (encrypted)
+```
+
+### Security Audit Tool
+
+Check your current security posture:
+
+```bash
+bsv-p2p config check-security
+```
+
+**Example output:**
+```
+🔍 Security Audit
+
+❌ CRITICAL: Private key in plaintext file
+   Fix: Run `bsv-p2p config migrate-to-keychain`
+
+⚠️  Config file permissions: 0644 (should be 0600)
+   Fix: chmod 600 ~/.bsv-p2p/config.json
+
+📋 Backup Checklist:
+   - Export key to secure offline storage
+   - Test recovery process
+```
+
+### Additional Security Resources
+
+- **[Key Management Guide](./security/KEY-MANAGEMENT.md)** — Full guide to key storage, backups, rotation
+- **[Security Audit Report](./security/PRIVATE-KEY-STORAGE-AUDIT.md)** — Technical deep dive
+- **[Threat Model](./security/KEY-MANAGEMENT.md#threat-model)** — Understand the risks
+
+### Common Security Mistakes
+
+❌ **"I'll add security later"** → Your testnet key gets used on mainnet → funds stolen  
+✅ **Start with proper security from day one**
+
+❌ **"It's just a few dollars"** → Bot gets compromised → entire server at risk  
+✅ **Defense in depth: secure all layers**
+
+❌ **"I backed up to Dropbox"** → Backup leaked → funds stolen  
+✅ **Offline, encrypted backups only**
+
+❌ **"Same key for all bots"** → One bot compromised → all bots compromised  
+✅ **Unique key per bot**
+
+### Production Deployment Checklist
+
+Before going live on mainnet:
+
+- [ ] Keys stored in OS keychain or encrypted config
+- [ ] Backups created and tested (recovery procedure verified)
+- [ ] `config check-security` passes all checks
+- [ ] File permissions: `chmod 600` on all config files
+- [ ] Firewall configured (limit port 4001/4002 access)
+- [ ] Monitoring enabled (alert on unusual transactions)
+- [ ] Funded with small test amount first ($1-5)
+- [ ] Test channel open/close cycle
+- [ ] Document recovery procedures for your team
+- [ ] Regular backup schedule (daily database backups)
+
+**Need help?** See [Key Management Guide](./security/KEY-MANAGEMENT.md) or ask in [GitHub Discussions](https://github.com/galt-tr/bsv-p2p/discussions).
 
 ## Next Steps
 

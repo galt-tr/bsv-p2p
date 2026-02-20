@@ -651,6 +651,282 @@ configCmd
     }
   })
 
+configCmd
+  .command('migrate-to-keychain')
+  .description('Migrate keys from config file to OS keychain')
+  .action(async () => {
+    const { KeychainManager } = await import('../config/keychain.js')
+    const configPath = getConfigFile()
+    
+    console.log(chalk.bold('\n🔐 Migrate Keys to OS Keychain\n'))
+    
+    // Check if config file exists
+    if (!existsSync(configPath)) {
+      console.log(chalk.red('No config file found'))
+      return
+    }
+    
+    // Read config
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+    
+    // Check for keys
+    const hasKeys = config.bsvPrivateKey || config.bsvPublicKey || config.bsvIdentityKey
+    if (!hasKeys) {
+      console.log(chalk.yellow('No keys found in config file'))
+      return
+    }
+    
+    // Initialize keychain
+    const keychain = new KeychainManager()
+    
+    // Check if keychain is available
+    const available = await keychain.isAvailable()
+    if (!available) {
+      console.log(chalk.red('OS keychain not available on this system'))
+      console.log(chalk.gray('Keychain requires:'))
+      console.log(chalk.gray('  - macOS: Keychain Access'))
+      console.log(chalk.gray('  - Linux: libsecret (install: apt install libsecret-1-0)'))
+      console.log(chalk.gray('  - Windows: Credential Manager'))
+      return
+    }
+    
+    // Migrate keys
+    console.log(chalk.gray('Migrating keys...'))
+    
+    try {
+      if (config.bsvPrivateKey) {
+        await keychain.setPrivateKey(config.bsvPrivateKey)
+        console.log(chalk.green('✓ Private key migrated'))
+      }
+      if (config.bsvPublicKey) {
+        await keychain.setPublicKey(config.bsvPublicKey)
+        console.log(chalk.green('✓ Public key migrated'))
+      }
+      if (config.bsvIdentityKey) {
+        await keychain.setIdentityKey(config.bsvIdentityKey)
+        console.log(chalk.green('✓ Identity key migrated'))
+      }
+      
+      console.log(chalk.green('\n✓ All keys migrated to OS keychain'))
+      console.log(chalk.yellow('\n⚠️  IMPORTANT:'))
+      console.log(chalk.gray('Remove keys from config.json for better security:'))
+      console.log(chalk.cyan(`  nano ${configPath}`))
+      console.log(chalk.gray('Delete the bsvPrivateKey, bsvPublicKey, and bsvIdentityKey fields'))
+    } catch (error: any) {
+      console.log(chalk.red(`\n✗ Migration failed: ${error.message}`))
+    }
+    
+    console.log()
+  })
+
+configCmd
+  .command('check-security')
+  .description('Audit configuration security')
+  .action(async () => {
+    const { KeychainManager } = await import('../config/keychain.js')
+    const { statSync } = await import('fs')
+    
+    console.log(chalk.bold('\n🔍 Security Audit\n'))
+    console.log(chalk.bold('━'.repeat(50)))
+    console.log()
+    
+    // Check 1: Key storage method
+    console.log(chalk.bold('Key Storage Method:'))
+    const keychain = new KeychainManager()
+    const keychainPrivKey = await keychain.getPrivateKey()
+    const keychainPubKey = await keychain.getPublicKey()
+    const keychainIdKey = await keychain.getIdentityKey()
+    
+    if (keychainPrivKey || keychainPubKey || keychainIdKey) {
+      console.log(`  ${chalk.green('✓')} Keys stored in OS keychain ${chalk.gray('(secure)')}`)
+    } else {
+      const configPath = getConfigFile()
+      if (existsSync(configPath)) {
+        const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+        if (config.bsvPrivateKey || config.bsvPublicKey || config.bsvIdentityKey) {
+          console.log(`  ${chalk.red('✗')} CRITICAL: Keys in plaintext config file`)
+          console.log(`     ${chalk.gray('Fix:')} ${chalk.cyan('bsv-p2p config migrate-to-keychain')}`)
+        }
+      }
+      
+      if (process.env.BSV_PRIVATE_KEY || process.env.BSV_PUBLIC_KEY || process.env.BSV_IDENTITY_KEY) {
+        console.log(`  ${chalk.yellow('⚠')} WARNING: Keys in environment variables`)
+        console.log(`     ${chalk.gray('Better:')} Use OS keychain`)
+      }
+      
+      const encryptedPath = join(getDataDir(), 'config.encrypted.json')
+      if (existsSync(encryptedPath)) {
+        console.log(`  ${chalk.cyan('ℹ')} Encrypted config file found`)
+        console.log(`     ${chalk.gray('Good:')} Better than plaintext`)
+      }
+    }
+    console.log()
+    
+    // Check 2: File permissions
+    console.log(chalk.bold('File Permissions:'))
+    const configPath = getConfigFile()
+    if (existsSync(configPath)) {
+      const stats = statSync(configPath)
+      const mode = (stats.mode & parseInt('777', 8)).toString(8)
+      
+      if (mode === '600') {
+        console.log(`  ${chalk.green('✓')} Config: 0600 ${chalk.gray('(owner only)')}`)
+      } else {
+        console.log(`  ${chalk.yellow('⚠')} Config: 0${mode} ${chalk.gray('(should be 0600)')}`)
+        console.log(`     ${chalk.gray('Fix:')} ${chalk.cyan(`chmod 600 ${configPath}`)}`)
+      }
+    }
+    console.log()
+    
+    // Check 3: Git repository
+    console.log(chalk.bold('Version Control:'))
+    const gitDir = join(getDataDir(), '.git')
+    if (existsSync(gitDir)) {
+      console.log(`  ${chalk.red('✗')} CRITICAL: Data dir is a git repository`)
+      console.log(`     ${chalk.gray('Risk:')} Keys may be in commit history`)
+      console.log(`     ${chalk.gray('Fix:')} Remove .git or use .gitignore`)
+    } else {
+      console.log(`  ${chalk.green('✓')} Not in git repository`)
+    }
+    console.log()
+    
+    // Check 4: Backup recommendations
+    console.log(chalk.bold('📋 Backup Checklist:'))
+    console.log(`  ${chalk.gray('□')} Export key to secure offline storage`)
+    console.log(`     ${chalk.cyan('bsv-p2p config export-key --output ~/backup.key')}`)
+    console.log(`  ${chalk.gray('□')} DO NOT store in cloud (Dropbox, Drive, etc.)`)
+    console.log(`  ${chalk.gray('□')} Encrypt external backups`)
+    console.log(`  ${chalk.gray('□')} Test recovery process`)
+    
+    console.log(chalk.bold('\n' + '━'.repeat(50)))
+    console.log()
+  })
+
+configCmd
+  .command('export-key')
+  .description('Export private key for backup')
+  .option('-o, --output <file>', 'Output file', join(getDataDir(), 'private-key-backup.txt'))
+  .option('--show', 'Display key in terminal (insecure)')
+  .action(async (options) => {
+    const { KeychainManager } = await import('../config/keychain.js')
+    
+    console.log(chalk.bold('\n🔑 Export Private Key\n'))
+    
+    // Try to get key from keychain first
+    const keychain = new KeychainManager()
+    let privateKey = await keychain.getPrivateKey()
+    
+    // Fallback to config file
+    if (!privateKey) {
+      const configPath = getConfigFile()
+      if (existsSync(configPath)) {
+        const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+        privateKey = config.bsvPrivateKey
+      }
+    }
+    
+    // Fallback to env var
+    if (!privateKey) {
+      privateKey = process.env.BSV_PRIVATE_KEY
+    }
+    
+    if (!privateKey) {
+      console.log(chalk.red('No private key found'))
+      console.log(chalk.gray('Run setup first: bsv-p2p setup'))
+      return
+    }
+    
+    if (options.show) {
+      console.log(chalk.yellow('⚠️  WARNING: Displaying private key in terminal'))
+      console.log(chalk.gray('Anyone with access to your screen can see it\n'))
+      console.log(chalk.bold('Private Key:'))
+      console.log(privateKey)
+      console.log()
+    } else {
+      writeFileSync(options.output, privateKey)
+      console.log(chalk.green(`✓ Private key exported to ${options.output}`))
+      console.log(chalk.yellow('\n⚠️  SECURITY WARNING:'))
+      console.log(chalk.gray('  - Store this file in a secure location'))
+      console.log(chalk.gray('  - Never commit to version control'))
+      console.log(chalk.gray('  - Encrypt with: gpg -c ' + options.output))
+      console.log(chalk.gray('  - Delete after secure storage'))
+      console.log()
+    }
+  })
+
+configCmd
+  .command('import-key')
+  .description('Import private key from backup')
+  .option('-i, --input <file>', 'Input file containing private key')
+  .option('--key <hex>', 'Private key as hex string')
+  .action(async (options) => {
+    const { KeychainManager } = await import('../config/keychain.js')
+    
+    console.log(chalk.bold('\n🔐 Import Private Key\n'))
+    
+    // Get key from input
+    let privateKey: string | undefined
+    
+    if (options.key) {
+      privateKey = options.key
+    } else if (options.input) {
+      if (!existsSync(options.input)) {
+        console.log(chalk.red(`File not found: ${options.input}`))
+        return
+      }
+      privateKey = readFileSync(options.input, 'utf-8').trim()
+    } else {
+      console.log(chalk.red('Error: Provide --input <file> or --key <hex>'))
+      return
+    }
+    
+    // Validate key format (basic check)
+    if (!privateKey.match(/^[0-9a-f]{64}$/i)) {
+      console.log(chalk.red('Invalid private key format'))
+      console.log(chalk.gray('Expected: 64-character hex string'))
+      return
+    }
+    
+    // Try to store in keychain
+    const keychain = new KeychainManager()
+    const available = await keychain.isAvailable()
+    
+    if (available) {
+      try {
+        await keychain.setPrivateKey(privateKey)
+        console.log(chalk.green('✓ Private key imported to OS keychain'))
+      } catch (error: any) {
+        console.log(chalk.red(`Failed to store in keychain: ${error.message}`))
+        console.log(chalk.gray('Falling back to config file...'))
+        
+        // Fallback: write to config file
+        const configPath = getConfigFile()
+        let config: Record<string, any> = {}
+        if (existsSync(configPath)) {
+          config = JSON.parse(readFileSync(configPath, 'utf-8'))
+        }
+        config.bsvPrivateKey = privateKey
+        writeFileSync(configPath, JSON.stringify(config, null, 2))
+        console.log(chalk.green('✓ Private key saved to config file'))
+        console.log(chalk.yellow('⚠️  WARNING: Key is in plaintext'))
+      }
+    } else {
+      // No keychain available, write to config file
+      const configPath = getConfigFile()
+      let config: Record<string, any> = {}
+      if (existsSync(configPath)) {
+        config = JSON.parse(readFileSync(configPath, 'utf-8'))
+      }
+      config.bsvPrivateKey = privateKey
+      writeFileSync(configPath, JSON.stringify(config, null, 2))
+      console.log(chalk.green('✓ Private key saved to config file'))
+      console.log(chalk.yellow('⚠️  WARNING: OS keychain not available'))
+      console.log(chalk.gray('Key is stored in plaintext'))
+    }
+    
+    console.log()
+  })
+
 // ============ SETUP COMMAND ============
 program
   .command('setup')

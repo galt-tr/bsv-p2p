@@ -16,9 +16,13 @@ import {
   PublicKey, 
   Script,
   Hash,
-  P2PKH,
-  OpCode
+  P2PKH
 } from '@bsv/sdk'
+
+// Bitcoin opcodes (from BIP 62)
+const OP_0 = 0x00
+const OP_2 = 0x52
+const OP_CHECKMULTISIG = 0xae
 import { Channel, ChannelConfig, DEFAULT_CHANNEL_CONFIG } from './types.js'
 
 // Maximum nSequence value (final, no replacement)
@@ -36,11 +40,11 @@ export function buildMultisigScript(pubKey1: string, pubKey2: string): Script {
   const sorted = [pubKey1, pubKey2].sort()
   
   return new Script()
-    .writeNumber(2)                          // OP_2
-    .writeBuffer(Buffer.from(sorted[0], 'hex'))  // pubkey1
-    .writeBuffer(Buffer.from(sorted[1], 'hex'))  // pubkey2
-    .writeNumber(2)                          // OP_2
-    .writeOpCode(OpCode.OP_CHECKMULTISIG)
+    .writeOpCode(OP_2)                                           // OP_2
+    .writeBin(Array.from(Buffer.from(sorted[0], 'hex')))         // pubkey1
+    .writeBin(Array.from(Buffer.from(sorted[1], 'hex')))         // pubkey2
+    .writeOpCode(OP_2)                                           // OP_2
+    .writeOpCode(OP_CHECKMULTISIG)
 }
 
 /**
@@ -49,9 +53,9 @@ export function buildMultisigScript(pubKey1: string, pubKey2: string): Script {
 export function buildMultisigUnlock(sig1: Buffer, sig2: Buffer): Script {
   // Order doesn't matter for CHECKMULTISIG, but we include OP_0 for the bug
   return new Script()
-    .writeOpCode(OpCode.OP_0)  // CHECKMULTISIG bug requires extra item
-    .writeBuffer(sig1)
-    .writeBuffer(sig2)
+    .writeOpCode(OP_0)                  // CHECKMULTISIG bug requires extra item
+    .writeBin(Array.from(sig1))
+    .writeBin(Array.from(sig2))
 }
 
 export interface FundingTxParams {

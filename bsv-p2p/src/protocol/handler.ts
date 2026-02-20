@@ -8,6 +8,7 @@ import { Libp2p } from 'libp2p'
 import { multiaddr } from '@multiformats/multiaddr'
 import * as lp from 'it-length-prefixed'
 import { EventEmitter } from 'events'
+import { RateLimiter } from '../daemon/rate-limiter.js'
 import {
   MESSAGE_PROTOCOL,
   Message,
@@ -32,6 +33,7 @@ export class MessageHandler extends EventEmitter {
   private node: Libp2p
   private peerId: string
   private relayAddr?: string
+  private rateLimiter: RateLimiter
   private pendingRequests: Map<string, {
     resolve: (msg: Message) => void
     reject: (err: Error) => void
@@ -43,6 +45,19 @@ export class MessageHandler extends EventEmitter {
     this.node = config.node
     this.peerId = config.peerId
     this.relayAddr = config.relayAddr
+    
+    // Initialize rate limiter with message handling config
+    this.rateLimiter = new RateLimiter({
+      maxMessagesPerWindow: 100,     // 100 messages per minute per peer
+      windowMs: 60 * 1000,            // 1 minute window
+      maxMessageSize: 1024 * 1024,    // 1MB max message size
+      rejectOnLimit: true             // Drop messages exceeding limit
+    })
+    
+    // Log rate limit violations
+    this.rateLimiter.on('rate_limit_violation', (violation) => {
+      console.warn(`[MessageHandler] Rate limit violation from ${violation.peerId.substring(0, 16)}... - ${violation.type}: ${violation.details}`)
+    })
     
     if (config.onMessage) {
       this.on('message', config.onMessage)
@@ -80,6 +95,15 @@ export class MessageHandler extends EventEmitter {
         // Fall back to connection.remotePeer if message.from is missing
         const senderPeerId = message.from || connectionPeer || 'unknown'
         console.log(`[Message] Received ${message.type} from ${senderPeerId.substring(0, 16)}...`)
+        
+        // Rate limiting check
+        const messageSize = messageData.byteLength
+        const allowed = this.rateLimiter.checkMessage(senderPeerId, messageSize)
+        
+        if (!allowed) {
+          console.warn(`[Message] Dropped message from ${senderPeerId.substring(0, 16)}... due to rate limit`)
+          return // Drop the message
+        }
         
         // Check if this is a response to a pending request
         if (message.type === MessageType.RESPONSE || message.type === MessageType.PAID_RESULT) {
@@ -278,5 +302,23 @@ To reply: cd ~/.openclaw/workspace/bsv-p2p && npx tsx send.ts ${senderPeerId} "y
 From: ${senderPeerId}
 Time: ${timestamp}
 Data: ${JSON.stringify(msg, null, 2)}`
+  }
+}
+
+  /**
+   * Cleanup and stop the message handler
+   */
+  stop(): void {
+    // Stop rate limiter
+    this.rateLimiter.stop()
+    
+    // Clear pending requests
+    for (const [id, pending] of this.pendingRequests.entries()) {
+      clearTimeout(pending.timeout)
+      pending.reject(new Error('MessageHandler stopped'))
+    }
+    this.pendingRequests.clear()
+    
+    console.log('[MessageHandler] Stopped')
   }
 }

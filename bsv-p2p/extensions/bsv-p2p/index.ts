@@ -1,14 +1,11 @@
 /**
  * BSV P2P Native OpenClaw Plugin
- * 
+ *
  * Runs P2PNode inside the gateway process as a background service.
- * Provides 5 agent tools for peer-to-peer messaging and payment channels.
+ * Provides 3 agent tools for peer-to-peer messaging and discovery.
  */
 
 import { P2PNode } from '../../src/daemon/node.js'
-import { ChannelManager } from '../../src/channels/manager.js'
-import { ChannelProtocol } from '../../src/channels/protocol.js'
-import { Wallet } from '../../src/wallet/index.js'
 import { homedir } from 'os'
 import { join } from 'path'
 
@@ -16,8 +13,6 @@ interface BSVConfig {
   port?: number
   relayAddress?: string
   bootstrapPeers?: string[]
-  walletPath?: string
-  bsvIdentityKey?: string
   enableRelay?: boolean
   enableMdns?: boolean
   maxConnections?: number
@@ -25,54 +20,42 @@ interface BSVConfig {
 
 export default function register(api: any) {
   let p2pNode: P2PNode | null = null
-  let channelManager: ChannelManager | null = null
-  let channelProtocol: ChannelProtocol | null = null
-  let wallet: Wallet | null = null
   let restartCount = 0
   let healthCheckInterval: NodeJS.Timeout | null = null
   let isShuttingDown = false
-  
+
   const MAX_RESTART_ATTEMPTS = 3
   const HEALTH_CHECK_INTERVAL_MS = 60000 // 1 minute
   const MAX_MEMORY_MB = 512 // Disable plugin if memory exceeds this
-  const MAX_CPU_PERCENT = 80 // Disable plugin if CPU exceeds this
 
-  // Helper to expand ~ in paths
-  function expandPath(path: string): string {
-    if (path.startsWith('~/')) {
-      return join(homedir(), path.slice(2))
-    }
-    return path
-  }
-  
   // Health check function
   function performHealthCheck() {
     try {
       if (!p2pNode || isShuttingDown) {
         return
       }
-      
+
       // Check if node is responsive
       const peerId = p2pNode.getPeerId()
       if (!peerId) {
         api.logger.warn('[BSV P2P] Health check failed: No peer ID')
         return
       }
-      
+
       // Check memory usage
       const memUsage = process.memoryUsage()
       const memMB = memUsage.heapUsed / 1024 / 1024
-      
+
       if (memMB > MAX_MEMORY_MB) {
         api.logger.error(`[BSV P2P] Memory usage too high: ${memMB.toFixed(2)} MB (max ${MAX_MEMORY_MB} MB)`)
         api.logger.error('[BSV P2P] Disabling plugin to prevent gateway crash')
         stopService()
         return
       }
-      
+
       // Log healthy status (debug level to avoid spam)
       api.logger.debug(`[BSV P2P] Health check passed (Memory: ${memMB.toFixed(2)} MB)`)
-      
+
     } catch (err: any) {
       api.logger.error('[BSV P2P] Health check error:', err.message)
       // Attempt restart if health check fails repeatedly
@@ -82,100 +65,73 @@ export default function register(api: any) {
       }
     }
   }
-  
+
   // Start service with restart logic
   async function startService() {
     try {
       const cfg: BSVConfig = api.config.plugins?.entries?.['bsv-p2p']?.config || {}
-      
+
       api.logger.info('[BSV P2P] Starting P2P node...')
-      
-      // Initialize wallet
-      const walletPath = expandPath(cfg.walletPath || '~/.bsv-p2p/wallet.db')
-      wallet = new Wallet(walletPath)
-      api.logger.debug(`[BSV P2P] Wallet initialized at ${walletPath}`)
-      
-      // Initialize channel manager
-      channelManager = new ChannelManager(wallet)
-      api.logger.debug('[BSV P2P] Channel manager initialized')
-      
+
       // Initialize P2P node
       p2pNode = new P2PNode({
         port: cfg.port || 4001,
         bootstrapPeers: cfg.bootstrapPeers || [],
-        wallet,
         relayAddress: cfg.relayAddress,
         enableRelay: cfg.enableRelay ?? true,
         enableMdns: cfg.enableMdns ?? false,
         maxConnections: cfg.maxConnections || 50
       } as any) // Type assertion to avoid config mismatch
-      
-      // Register channel manager with P2P node
-      if (p2pNode.registerChannelManager) {
-        p2pNode.registerChannelManager(channelManager)
-      }
-      
+
       // Start listening
       await p2pNode.start()
-      
+
       const peerId = p2pNode.getPeerId()
       api.logger.info(`[BSV P2P] Node started successfully`)
       api.logger.info(`[BSV P2P] Peer ID: ${peerId}`)
-      
-      // Initialize channel protocol for channel operations
-      if (p2pNode.messages && channelManager) {
-        channelProtocol = new ChannelProtocol({
-          channelManager,
-          messageHandler: p2pNode.messages,
-          peerId,
-          autoAcceptMaxCapacity: 100000 // Auto-accept channels up to 100k sats
-        })
-        api.logger.debug('[BSV P2P] Channel protocol initialized')
-      }
-      
+
       // Handle incoming messages
       p2pNode.on('message', (msg: any) => {
         api.logger.debug('[BSV P2P] Received message:', {
           from: msg.from?.substring(0, 16) + '...',
           type: msg.type
         })
-        // TODO: Route to appropriate handler based on message type
       })
-      
+
       // Handle peer connections
       p2pNode.on('peer:connected', (peerId: string) => {
         api.logger.info(`[BSV P2P] Peer connected: ${peerId.substring(0, 16)}...`)
       })
-      
+
       p2pNode.on('peer:disconnected', (peerId: string) => {
         api.logger.info(`[BSV P2P] Peer disconnected: ${peerId.substring(0, 16)}...`)
       })
-      
+
       // Start health check interval
       if (healthCheckInterval) {
         clearInterval(healthCheckInterval)
       }
       healthCheckInterval = setInterval(performHealthCheck, HEALTH_CHECK_INTERVAL_MS)
       api.logger.debug(`[BSV P2P] Health checks enabled (every ${HEALTH_CHECK_INTERVAL_MS / 1000}s)`)
-      
+
       // Reset restart count on successful start
       restartCount = 0
-      
+
     } catch (err: any) {
       api.logger.error('[BSV P2P] Failed to start P2P node:', err.message)
       api.logger.error('[BSV P2P] Stack:', err.stack)
-      
+
       // Attempt restart if under limit
       if (restartCount < MAX_RESTART_ATTEMPTS && !isShuttingDown) {
         restartCount++
         api.logger.warn(`[BSV P2P] Attempting automatic restart (${restartCount}/${MAX_RESTART_ATTEMPTS})`)
         await stopService()
-        
+
         // Wait before restart (exponential backoff)
         const delayMs = Math.min(5000 * Math.pow(2, restartCount - 1), 30000)
         api.logger.info(`[BSV P2P] Waiting ${delayMs}ms before restart...`)
         await new Promise(resolve => setTimeout(resolve, delayMs))
-        
+
         if (!isShuttingDown) {
           await startService()
         }
@@ -185,37 +141,25 @@ export default function register(api: any) {
       }
     }
   }
-  
+
   // Stop service
   async function stopService() {
     try {
       isShuttingDown = true
       api.logger.info('[BSV P2P] Stopping P2P node...')
-      
+
       // Stop health checks
       if (healthCheckInterval) {
         clearInterval(healthCheckInterval)
         healthCheckInterval = null
       }
-      
+
       if (p2pNode) {
         await p2pNode.stop()
         p2pNode = null
         api.logger.debug('[BSV P2P] P2P node stopped')
       }
-      
-      if (channelManager) {
-        // await channelManager.shutdown() // If this method exists
-        channelManager = null
-        api.logger.debug('[BSV P2P] Channel manager stopped')
-      }
-      
-      if (wallet) {
-        wallet.close()
-        wallet = null
-        api.logger.debug('[BSV P2P] Wallet closed')
-      }
-      
+
       api.logger.info('[BSV P2P] Stopped successfully')
     } catch (err: any) {
       api.logger.error('[BSV P2P] Error during shutdown:', err.message)
@@ -223,7 +167,7 @@ export default function register(api: any) {
       isShuttingDown = false
     }
   }
-  
+
   // Restart service
   async function restartService() {
     api.logger.warn('[BSV P2P] Restarting service...')
@@ -234,15 +178,15 @@ export default function register(api: any) {
   // Background service: P2P node lifecycle
   api.registerService({
     id: 'bsv-p2p-node',
-    
+
     async start() {
       await startService()
     },
-    
+
     async stop() {
       await stopService()
     },
-    
+
     // Health status for monitoring
     async status() {
       try {
@@ -253,10 +197,10 @@ export default function register(api: any) {
             error: 'P2P node not running'
           }
         }
-        
+
         const memUsage = process.memoryUsage()
         const memMB = memUsage.heapUsed / 1024 / 1024
-        
+
         return {
           status: 'running',
           peerId: p2pNode.getPeerId(),
@@ -306,10 +250,8 @@ export default function register(api: any) {
           }
         }
 
-        // Call discoverPeers on P2PNode (if method exists)
-        // For now, return connected peers
         const connectedPeers = p2pNode!.getConnectedPeers ? p2pNode!.getConnectedPeers() : []
-        
+
         if (connectedPeers.length === 0) {
           return {
             content: [{
@@ -318,11 +260,11 @@ export default function register(api: any) {
             }]
           }
         }
-        
+
         const peerList = connectedPeers.map((p: any, i: number) => {
           return `${i + 1}. ${p.toString()}`
         }).join('\n')
-        
+
         return {
           content: [{
             type: 'text',
@@ -368,7 +310,7 @@ export default function register(api: any) {
         }
 
         await p2pNode!.sendMessage(params.peerId, params.message)
-        
+
         return {
           content: [{
             type: 'text',
@@ -385,67 +327,7 @@ export default function register(api: any) {
     }
   })
 
-  // Tool 3: p2p_request - Request paid service from peer
-  api.registerTool({
-    name: 'p2p_request',
-    description: 'Request a paid service from another peer. The peer will provide a quote, and payment will be handled automatically via payment channel or on-chain.',
-    parameters: {
-      type: 'object',
-      properties: {
-        peerId: {
-          type: 'string',
-          description: 'The peer ID of the service provider'
-        },
-        service: {
-          type: 'string',
-          description: 'The service name (e.g. "translate", "image-analysis", "poem")'
-        },
-        input: {
-          type: 'object',
-          description: 'Service-specific input parameters (JSON object)',
-          additionalProperties: true
-        },
-        maxPayment: {
-          type: 'number',
-          description: 'Maximum payment willing to make in satoshis (default: 1000)',
-          default: 1000
-        }
-      },
-      required: ['peerId', 'service', 'input']
-    },
-    async execute(_context: any, params: {
-      peerId: string
-      service: string
-      input: any
-      maxPayment?: number
-    }): Promise<any> {
-      try {
-        const check = ensureRunning()
-        if (!check.ok) {
-          return {
-            content: [{ type: 'text', text: check.error! }],
-            isError: true
-          }
-        }
-
-        // TODO: Implement full request flow when service handler is ready
-        return {
-          content: [{
-            type: 'text',
-            text: `Service request functionality not yet fully implemented.\n\nRequested:\n- Peer: ${params.peerId.substring(0, 16)}...\n- Service: ${params.service}\n- Input: ${JSON.stringify(params.input, null, 2)}\n- Max payment: ${params.maxPayment || 1000} sats\n\nThis requires integration with the channel payment protocol.`
-          }]
-        }
-      } catch (err: any) {
-        api.logger.error('[BSV P2P] p2p_request error:', err)
-        return {
-          content: [{ type: 'text', text: `Error requesting service: ${err.message}` }],
-          isError: true
-        }
-      }
-    }
-  })
-
-  // Tool 4: p2p_status - Get P2P daemon status
+  // Tool 3: p2p_status - Get P2P daemon status
   api.registerTool({
     name: 'p2p_status',
     description: 'Check the status of the P2P node (peer ID, relay connection, connected peers).',
@@ -467,14 +349,14 @@ export default function register(api: any) {
 
         const peerId = p2pNode!.getPeerId()
         const connectedPeers = p2pNode!.getConnectedPeers ? p2pNode!.getConnectedPeers() : []
-        
+
         const info = [
           'P2P Node Status: RUNNING',
           `  Peer ID: ${peerId}`,
           `  Connected peers: ${connectedPeers.length}`,
           `  Relay: ${p2pNode!.isRelayConnected ? p2pNode!.isRelayConnected() : 'unknown'}`
         ].join('\n')
-        
+
         return {
           content: [{ type: 'text', text: info }]
         }
@@ -488,195 +370,5 @@ export default function register(api: any) {
     }
   })
 
-  // Tool 5: p2p_channels - Manage payment channels (list, open, close)
-  api.registerTool({
-    name: 'p2p_channels',
-    description: 'Manage payment channels: list existing channels, open new channels, or close channels. Use to check available channels before requesting paid services.',
-    parameters: {
-      type: 'object',
-      properties: {
-        action: {
-          type: 'string',
-          description: 'Action to perform',
-          enum: ['list', 'open', 'close'],
-          default: 'list'
-        },
-        state: {
-          type: 'string',
-          description: 'For list action: filter by state',
-          enum: ['pending', 'open', 'closing', 'closed']
-        },
-        peerId: {
-          type: 'string',
-          description: 'For open action: remote peer ID to open channel with'
-        },
-        pubkey: {
-          type: 'string',
-          description: 'For open action: remote peer BSV public key (hex)'
-        },
-        satoshis: {
-          type: 'number',
-          description: 'For open action: channel capacity in satoshis'
-        },
-        channelId: {
-          type: 'string',
-          description: 'For close action: channel ID to close'
-        }
-      },
-      required: ['action']
-    },
-    async execute(_context: any, params: { 
-      action?: string
-      state?: string
-      peerId?: string
-      pubkey?: string
-      satoshis?: number
-      channelId?: string
-    }): Promise<any> {
-      try {
-        const check = ensureRunning()
-        if (!check.ok) {
-          return {
-            content: [{ type: 'text', text: check.error! }],
-            isError: true
-          }
-        }
-
-        if (!channelManager) {
-          return {
-            content: [{ type: 'text', text: 'Channel manager not initialized' }],
-            isError: true
-          }
-        }
-
-        const action = params.action || 'list'
-
-        // LIST action
-        if (action === 'list') {
-          const allChannels = channelManager.getAllChannels()
-          let channels = allChannels
-          
-          if (params.state) {
-            channels = channels.filter(c => c.state === params.state)
-          }
-          
-          if (channels.length === 0) {
-            return {
-              content: [{
-                type: 'text',
-                text: 'No payment channels found. Open a channel with action="open".'
-              }]
-            }
-          }
-          
-          const channelInfo = channels.map(ch => {
-            return [
-              `Channel: ${ch.id.substring(0, 16)}...`,
-              `  State: ${ch.state}`,
-              `  Peer: ${ch.remotePeerId.substring(0, 32)}...`,
-              `  Capacity: ${ch.capacity} sats`,
-              `  Your balance: ${ch.localBalance} sats`,
-              `  Their balance: ${ch.remoteBalance} sats`
-            ].join('\n')
-          }).join('\n\n')
-          
-          return {
-            content: [{
-              type: 'text',
-              text: `Found ${channels.length} channel(s):\n\n${channelInfo}`
-            }]
-          }
-        }
-
-        // OPEN action
-        if (action === 'open') {
-          if (!channelProtocol) {
-            return {
-              content: [{ type: 'text', text: 'Channel protocol not initialized' }],
-              isError: true
-            }
-          }
-
-          if (!params.peerId || !params.pubkey || !params.satoshis) {
-            return {
-              content: [{
-                type: 'text',
-                text: 'Missing required parameters for open action: peerId, pubkey, satoshis'
-              }],
-              isError: true
-            }
-          }
-
-          api.logger.info(`[BSV P2P] Opening channel with ${params.peerId.substring(0, 16)}... for ${params.satoshis} sats`)
-          
-          const channel = await channelProtocol.openChannel(
-            params.peerId,
-            params.pubkey,
-            params.satoshis,
-            30000 // 30 second timeout
-          )
-
-          return {
-            content: [{
-              type: 'text',
-              text: `Channel opened successfully!\n` +
-                    `  Channel ID: ${channel.id}\n` +
-                    `  Peer: ${channel.remotePeerId.substring(0, 32)}...\n` +
-                    `  Capacity: ${channel.capacity} sats\n` +
-                    `  State: ${channel.state}`
-            }]
-          }
-        }
-
-        // CLOSE action
-        if (action === 'close') {
-          if (!channelProtocol) {
-            return {
-              content: [{ type: 'text', text: 'Channel protocol not initialized' }],
-              isError: true
-            }
-          }
-
-          if (!params.channelId) {
-            return {
-              content: [{
-                type: 'text',
-                text: 'Missing required parameter for close action: channelId'
-              }],
-              isError: true
-            }
-          }
-
-          api.logger.info(`[BSV P2P] Closing channel ${params.channelId.substring(0, 16)}...`)
-          
-          await channelProtocol.closeChannel(params.channelId)
-
-          return {
-            content: [{
-              type: 'text',
-              text: `Channel close initiated: ${params.channelId.substring(0, 16)}...\n` +
-                    `The channel will close once both parties confirm.`
-            }]
-          }
-        }
-
-        return {
-          content: [{
-            type: 'text',
-            text: `Unknown action: ${action}. Valid actions: list, open, close`
-          }],
-          isError: true
-        }
-
-      } catch (err: any) {
-        api.logger.error('[BSV P2P] p2p_channels error:', err)
-        return {
-          content: [{ type: 'text', text: `Error: ${err.message}` }],
-          isError: true
-        }
-      }
-    }
-  })
-
-  api.logger.info('[BSV P2P] Plugin registered successfully')
+  api.logger.info('[BSV P2P] Plugin registered successfully (P2P-only: discover, send, status)')
 }

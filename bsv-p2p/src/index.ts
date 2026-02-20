@@ -1,4 +1,4 @@
-// Main exports for bsv-p2p package
+// Main exports for bsv-p2p package — P2P networking only
 
 export { P2PNode, createP2PNode } from './daemon/node.js'
 export type {
@@ -17,17 +17,13 @@ export {
 } from './daemon/types.js'
 
 // Gateway integration
-export { 
-  GatewayClient, 
-  createGatewayClientFromEnv 
+export {
+  GatewayClient,
+  createGatewayClientFromEnv
 } from './daemon/gateway.js'
-export type { 
-  GatewayConfig, 
-  WakeOptions, 
+export type {
+  GatewayConfig,
+  WakeOptions,
   AgentRunOptions,
-  GatewayResponse 
+  GatewayResponse
 } from './daemon/gateway.js'
-
-// Wallet
-export { Wallet } from './wallet/index.js'
-export type { WalletConfig, TrackedUTXO } from './wallet/index.js'

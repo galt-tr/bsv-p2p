@@ -75,7 +75,6 @@ const errors: Record<string, (detail?: string) => FriendlyError> = {
     cause: detail || 'The config file has missing or malformed fields.',
     fix: [
       'Check ~/.bsv-p2p/config.json for syntax errors',
-      'Ensure bsvPrivateKey and bsvPublicKey are present',
       'Re-run initialization: npx tsx scripts/init.ts',
     ].join('\n  • '),
   }),
@@ -89,40 +88,6 @@ const errors: Record<string, (detail?: string) => FriendlyError> = {
       'Ensure the remote peer has their daemon running',
       'Both peers must be connected to the relay server',
       'Check your relay connection: bsv-p2p status',
-    ].join('\n  • '),
-  }),
-
-  CHANNEL_REJECTED: (detail) => ({
-    code: 'CHANNEL_REJECTED',
-    message: 'The remote peer rejected your payment channel.',
-    cause: detail || 'The channel capacity may exceed their auto-accept limit.',
-    fix: [
-      'Try a smaller channel capacity',
-      'Contact the peer operator to increase their autoAcceptChannelsBelowSats',
-      'The peer may have manual approval configured — wait for them to accept',
-    ].join('\n  • '),
-    docs: 'docs/PAYMENT-CHANNELS-GUIDE.md',
-  }),
-
-  INSUFFICIENT_FUNDS: (detail) => ({
-    code: 'INSUFFICIENT_FUNDS',
-    message: 'Not enough BSV to complete this transaction.',
-    cause: detail || 'Your wallet balance is below the required amount.',
-    fix: [
-      'Check your balance: bsv-p2p status',
-      'Fund your wallet with BSV',
-      'If opening a channel, reduce the capacity amount',
-    ].join('\n  • '),
-  }),
-
-  CHANNEL_NOT_FOUND: (detail) => ({
-    code: 'CHANNEL_NOT_FOUND',
-    message: `Payment channel ${detail || '(unknown)'} not found.`,
-    cause: 'The channel ID may be incorrect or the channel was already closed.',
-    fix: [
-      'List your channels: bsv-p2p channels list',
-      'Verify the channel ID',
-      'The channel may have been closed by the remote peer',
     ].join('\n  • '),
   }),
 

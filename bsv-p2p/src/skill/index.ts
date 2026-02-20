@@ -1,10 +1,10 @@
 /**
  * OpenClaw Skill Integration for BSV P2P
- * 
+ *
  * Registers tools that agents can use to:
  * - Discover peers and services on the P2P network
  * - Send messages to other bots
- * - Request paid services from other bots
+ * - Check P2P daemon status
  */
 
 const API_PORT = 4002 // Daemon API port
@@ -16,19 +16,19 @@ interface ToolContext {
 
 async function apiCall(method: string, path: string, body?: any): Promise<any> {
   const url = `http://127.0.0.1:${API_PORT}${path}`
-  
+
   try {
     const response = await fetch(url, {
       method,
       headers: body ? { 'Content-Type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : undefined
     })
-    
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: response.statusText }))
       throw new Error(error.error || `HTTP ${response.status}`)
     }
-    
+
     return await response.json()
   } catch (err: any) {
     if (err.code === 'ECONNREFUSED') {
@@ -59,7 +59,7 @@ export function registerP2PTools(api: any): void {
       try {
         const query = params.service ? `?service=${encodeURIComponent(params.service)}` : ''
         const result = await apiCall('GET', `/discover${query}`)
-        
+
         if (!result.peers || result.peers.length === 0) {
           return {
             content: [{
@@ -68,7 +68,7 @@ export function registerP2PTools(api: any): void {
             }]
           }
         }
-        
+
         // Format the peer list
         const peerList = result.peers.map((peer: any) => {
           let info = `Peer: ${peer.peerId}`
@@ -80,7 +80,7 @@ export function registerP2PTools(api: any): void {
           }
           return info
         }).join('\n\n')
-        
+
         return {
           content: [{
             type: 'text',
@@ -123,7 +123,7 @@ export function registerP2PTools(api: any): void {
           peerId: params.peerId,
           message: params.message
         })
-        
+
         return {
           content: [{
             type: 'text',
@@ -142,72 +142,6 @@ export function registerP2PTools(api: any): void {
     }
   })
 
-  // p2p_request - Request a paid service from a peer
-  api.registerTool({
-    name: 'p2p_request',
-    description: 'Request a paid service from another peer. The peer will provide a quote, and payment will be handled automatically via payment channel or on-chain.',
-    parameters: {
-      type: 'object',
-      properties: {
-        peerId: {
-          type: 'string',
-          description: 'The peer ID of the service provider'
-        },
-        service: {
-          type: 'string',
-          description: 'The service name (e.g. "translate", "image-analysis", "poem")'
-        },
-        input: {
-          type: 'object',
-          description: 'Service-specific input parameters (JSON object)',
-          additionalProperties: true
-        },
-        maxPayment: {
-          type: 'number',
-          description: 'Maximum payment willing to make in satoshis (default: 1000)',
-          default: 1000
-        },
-        channelId: {
-          type: 'string',
-          description: 'Optional: specific payment channel ID to use'
-        }
-      },
-      required: ['peerId', 'service', 'input']
-    },
-    async execute(_context: ToolContext, params: {
-      peerId: string
-      service: string
-      input: any
-      maxPayment?: number
-      channelId?: string
-    }): Promise<any> {
-      try {
-        // Note: This is a placeholder for the full request flow
-        // In a real implementation, this would:
-        // 1. Send REQUEST message
-        // 2. Receive QUOTE
-        // 3. Accept quote if price <= maxPayment
-        // 4. Make payment (via channel or direct)
-        // 5. Receive RESPONSE with result
-        
-        return {
-          content: [{
-            type: 'text',
-            text: `Service request functionality not yet fully implemented.\n\nRequested:\n- Peer: ${params.peerId.substring(0, 16)}...\n- Service: ${params.service}\n- Input: ${JSON.stringify(params.input, null, 2)}\n- Max payment: ${params.maxPayment || 1000} sats\n\nThis requires integration with the channel payment protocol.`
-          }]
-        }
-      } catch (err: any) {
-        return {
-          content: [{
-            type: 'text',
-            text: `Error requesting service: ${err.message}`
-          }],
-          isError: true
-        }
-      }
-    }
-  })
-
   // p2p_status - Get P2P daemon status
   api.registerTool({
     name: 'p2p_status',
@@ -219,7 +153,7 @@ export function registerP2PTools(api: any): void {
     async execute(_context: ToolContext, _params: {}): Promise<any> {
       try {
         const status = await apiCall('GET', '/status')
-        
+
         const info = [
           `P2P Daemon Status:`,
           `  Peer ID: ${status.peerId}`,
@@ -227,7 +161,7 @@ export function registerP2PTools(api: any): void {
           `  Connected peers: ${status.connectedPeers}`,
           `  Healthy: ${status.isHealthy ? 'yes' : 'no'}`
         ].join('\n')
-        
+
         return {
           content: [{
             type: 'text',
@@ -239,67 +173,6 @@ export function registerP2PTools(api: any): void {
           content: [{
             type: 'text',
             text: `Error getting status: ${err.message}`
-          }],
-          isError: true
-        }
-      }
-    }
-  })
-
-  // p2p_channels - List payment channels
-  api.registerTool({
-    name: 'p2p_channels',
-    description: 'List all payment channels and their balances. Use to check available channels before requesting paid services.',
-    parameters: {
-      type: 'object',
-      properties: {
-        state: {
-          type: 'string',
-          description: 'Filter by state: "pending", "open", "closing", or "closed"',
-          enum: ['pending', 'open', 'closing', 'closed']
-        }
-      }
-    },
-    async execute(_context: ToolContext, params: { state?: string }): Promise<any> {
-      try {
-        const result = await apiCall('GET', '/channels')
-        let channels = result.channels || []
-        
-        if (params.state) {
-          channels = channels.filter((c: any) => c.state === params.state)
-        }
-        
-        if (channels.length === 0) {
-          return {
-            content: [{
-              type: 'text',
-              text: 'No payment channels found. Open a channel with: bsv-p2p channels open <peerId> <satoshis> --pubkey <remotePubKey>'
-            }]
-          }
-        }
-        
-        const channelInfo = channels.map((ch: any) => {
-          return [
-            `Channel: ${ch.id.substring(0, 16)}...`,
-            `  State: ${ch.state}`,
-            `  Peer: ${ch.remotePeerId.substring(0, 32)}...`,
-            `  Capacity: ${ch.capacity} sats`,
-            `  Your balance: ${ch.localBalance} sats`,
-            `  Their balance: ${ch.remoteBalance} sats`
-          ].join('\n')
-        }).join('\n\n')
-        
-        return {
-          content: [{
-            type: 'text',
-            text: `Found ${channels.length} channel(s):\n\n${channelInfo}`
-          }]
-        }
-      } catch (err: any) {
-        return {
-          content: [{
-            type: 'text',
-            text: `Error listing channels: ${err.message}`
           }],
           isError: true
         }

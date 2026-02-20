@@ -93,6 +93,15 @@ Key concepts for BSV development:
 
 **Full details:** `memory/bsv-wallet-architecture.md`
 
+## ⚠️ Lessons Learned (Painful)
+
+### Lost Treasury Keys (2026-02-20)
+- Original funded wallet `1Dodgcnetv9bkMxVvrD18XTMZ7u76WtXgJ` had ~2.4M sats from Moneo tests
+- `scripts/init.ts` regenerated keys on Feb 19 without checking for existing ones (it DID check, but config was wiped/recreated during agent setup)
+- Private key was only in `~/.bsv-p2p/config.json` — no backup
+- **Funds lost.** New treasury address: `18vC3MuEjoDMEaSd71AmWM4ztesAPRqvsa` (needs funding)
+- **Rule: NEVER overwrite keys without explicit backup confirmation. Always back up private keys.**
+
 ## 📌 Important Context
 
 - Reinstalled from a previous instance (no memories from before)

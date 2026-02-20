@@ -73,16 +73,35 @@ function getDataDir(): string {
 function loadConfig(): DaemonConfig {
   const configPath = join(getDataDir(), 'config.json')
   
+  let config: DaemonConfig = DEFAULT_DAEMON_CONFIG
+  
+  // Load from file if exists
   if (existsSync(configPath)) {
     try {
       const data = readFileSync(configPath, 'utf-8')
-      return { ...DEFAULT_DAEMON_CONFIG, ...JSON.parse(data) }
+      config = { ...DEFAULT_DAEMON_CONFIG, ...JSON.parse(data) }
     } catch {
-      return DEFAULT_DAEMON_CONFIG
+      config = DEFAULT_DAEMON_CONFIG
     }
   }
   
-  return DEFAULT_DAEMON_CONFIG
+  // Override with environment variables if present
+  if (process.env.BSV_PRIVATE_KEY) {
+    config.bsvPrivateKey = process.env.BSV_PRIVATE_KEY
+    console.log('[Config] Using BSV_PRIVATE_KEY from environment')
+  }
+  
+  if (process.env.BSV_PUBLIC_KEY) {
+    config.bsvPublicKey = process.env.BSV_PUBLIC_KEY
+    console.log('[Config] Using BSV_PUBLIC_KEY from environment')
+  }
+  
+  if (process.env.BSV_IDENTITY_KEY) {
+    config.bsvIdentityKey = process.env.BSV_IDENTITY_KEY
+    console.log('[Config] Using BSV_IDENTITY_KEY from environment')
+  }
+  
+  return config
 }
 
 function savePidFile(pid: number): void {

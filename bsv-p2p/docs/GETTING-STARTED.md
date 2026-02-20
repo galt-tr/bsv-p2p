@@ -75,6 +75,35 @@ The init script creates config automatically. You can customize `~/.bsv-p2p/conf
 | `autoAcceptChannelsBelowSats` | Auto-accept channels up to this amount | 100000 |
 | `healthCheckIntervalMs` | Health check interval | 30000 |
 
+### Environment Variable Override
+
+You can override configuration values using environment variables. This is useful for Docker deployments, CI/CD pipelines, and production environments where you don't want keys in config files.
+
+**Supported environment variables:**
+
+```bash
+export BSV_PRIVATE_KEY="your_hex_private_key"
+export BSV_PUBLIC_KEY="your_hex_public_key"
+export BSV_IDENTITY_KEY="your_bsv_identity_key"
+```
+
+Environment variables take precedence over config file values. The daemon will log which keys are loaded from environment:
+
+```bash
+bsv-p2p daemon start
+# [Config] Using BSV_PRIVATE_KEY from environment
+# [Config] Using BSV_PUBLIC_KEY from environment
+# Daemon started successfully
+```
+
+**Docker example:**
+
+```bash
+docker run -e BSV_PRIVATE_KEY="abc123..." -e BSV_PUBLIC_KEY="def456..." bsv-p2p
+```
+
+**Security note:** Environment variables are more secure than plaintext config files, but for maximum security use OS keychain integration (see Security Best Practices section).
+
 ### OpenClaw Gateway Integration
 
 Set environment variables to wake your agent on P2P messages:

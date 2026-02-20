@@ -6,6 +6,7 @@ import { ChannelManager } from '../channels/manager.js'
 import { ChannelProtocol } from '../channels/protocol.js'
 import { Wallet } from '../wallet/index.js'
 import { MessageType, PaymentMessage, PaymentAckMessage, createBaseMessage } from '../protocol/messages.js'
+import { KeychainManager } from '../config/keychain.js'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -70,7 +71,7 @@ function getDataDir(): string {
   return dir
 }
 
-function loadConfig(): DaemonConfig {
+async function loadConfig(): Promise<DaemonConfig> {
   const configPath = join(getDataDir(), 'config.json')
   
   let config: DaemonConfig = DEFAULT_DAEMON_CONFIG
@@ -85,7 +86,55 @@ function loadConfig(): DaemonConfig {
     }
   }
   
-  // Override with environment variables if present
+  // Priority 1: Check OS keychain for keys
+  const keychain = new KeychainManager()
+  const keychainPrivateKey = await keychain.getPrivateKey()
+  const keychainPublicKey = await keychain.getPublicKey()
+  const keychainIdentityKey = await keychain.getIdentityKey()
+  
+  if (keychainPrivateKey || keychainPublicKey || keychainIdentityKey) {
+    console.log('[Config] Loading keys from OS keychain')
+    
+    if (keychainPrivateKey) {
+      config.bsvPrivateKey = keychainPrivateKey
+    }
+    if (keychainPublicKey) {
+      config.bsvPublicKey = keychainPublicKey
+    }
+    if (keychainIdentityKey) {
+      config.bsvIdentityKey = keychainIdentityKey
+    }
+  } else {
+    // Migration: If keys exist in plaintext config, offer to migrate
+    if (config.bsvPrivateKey || config.bsvPublicKey || config.bsvIdentityKey) {
+      const keychainAvailable = await keychain.isAvailable()
+      
+      if (keychainAvailable) {
+        console.log('[Config] ⚠️  WARNING: Keys found in plaintext config file')
+        console.log('[Config] Migrating keys to OS keychain for better security...')
+        
+        try {
+          if (config.bsvPrivateKey) {
+            await keychain.setPrivateKey(config.bsvPrivateKey)
+          }
+          if (config.bsvPublicKey) {
+            await keychain.setPublicKey(config.bsvPublicKey)
+          }
+          if (config.bsvIdentityKey) {
+            await keychain.setIdentityKey(config.bsvIdentityKey)
+          }
+          
+          console.log('[Config] ✅ Keys migrated to OS keychain')
+          console.log('[Config] TIP: You can now remove keys from config.json for better security')
+        } catch (error: any) {
+          console.log('[Config] ⚠️  Failed to migrate to keychain:', error.message)
+          console.log('[Config] Continuing with plaintext config keys')
+        }
+      }
+    }
+  }
+  
+  // Priority 2: Override with environment variables if present
   if (process.env.BSV_PRIVATE_KEY) {
     config.bsvPrivateKey = process.env.BSV_PRIVATE_KEY
     console.log('[Config] Using BSV_PRIVATE_KEY from environment')
@@ -338,7 +387,7 @@ function startRelayRetryBackgroundTask(node: P2PNode, initialTimeoutMs: number):
 }
 
 async function main(): Promise<void> {
-  const config = loadConfig()
+  const config = await loadConfig()
   
   const envGateway = loadGatewayConfigFromEnv()
   const gatewayConfig: GatewayConfig = envGateway.enabled 

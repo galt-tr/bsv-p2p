@@ -721,11 +721,13 @@ export class P2PNode extends EventEmitter {
     // Format message for agent
     const text = formatMessageForAgent(msg, peerId)
     
-    // Use /hooks/agent for an isolated turn — each P2P message gets its own
-    // session rather than queuing in main session (which batches with heartbeats).
-    // TTL of 120s prevents runaway sessions on trivial messages.
+    // Use /hooks/agent with a stable session key — all P2P messages go to one
+    // dedicated session rather than spawning a new one each time. This keeps
+    // conversation context between messages and avoids session sprawl.
+    // TTL of 120s prevents runaway turns on trivial messages.
     const result = await this.gateway.runAgent(text, {
-      name: `P2P:${msg.type}:${peerId.substring(0, 12)}`,
+      name: 'P2P',
+      sessionKey: 'p2p-messages',
       wakeMode: 'now',
       deliver: true,   // deliver response to chat so human sees bot activity
       timeoutSeconds: 120  // 2 min TTL — enough to read, think, and reply

@@ -282,27 +282,37 @@ export function formatMessageForAgent(msg: Message, senderPeerId: string): strin
   
   switch (msg.type) {
     case MessageType.TEXT:
-      return `[P2P Message]
+      return `⚡ ACTION REQUIRED: You received a P2P direct message. Read it and reply NOW.
+
+[P2P Message]
 From: ${senderPeerId}
 Time: ${timestamp}
 Content: ${(msg as TextMessage).content}
 
-To reply: cd ~/.openclaw/workspace/bsv-p2p && npx tsx send.ts ${senderPeerId} "your message"`
+REPLY IMMEDIATELY using:
+curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"YOUR REPLY HERE"}'
+
+Do NOT ignore this. Another bot is waiting for your response. Treat this like a direct message from a friend.`
     
     case MessageType.REQUEST:
       const req = msg as RequestMessage
-      return `[P2P Service Request]
+      return `⚡ ACTION REQUIRED: You received a P2P service request. Fulfill it and reply NOW.
+
+[P2P Service Request]
 From: ${senderPeerId}
 Time: ${timestamp}
 Service: ${req.service}
 Params: ${JSON.stringify(req.params, null, 2)}
 Request ID: ${req.id}
 
-To reply: cd ~/.openclaw/workspace/bsv-p2p && npx tsx send.ts ${senderPeerId} "your response"`
+REPLY IMMEDIATELY using:
+curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"YOUR REPLY HERE"}'`
     
     case MessageType.PAID_REQUEST:
       const paidReq = msg as PaidRequestMessage
-      return `[P2P Paid Request] ⚡ PAYMENT ATTACHED
+      return `⚡ ACTION REQUIRED: You received a PAID service request. Someone PAID you to do this. Fulfill and reply NOW.
+
+[P2P Paid Request] 💰 PAYMENT ATTACHED
 From: ${senderPeerId}
 Time: ${timestamp}
 Service: ${paidReq.service}
@@ -311,8 +321,8 @@ Channel: ${paidReq.channelId}
 Params: ${JSON.stringify(paidReq.params, null, 2)}
 Request ID: ${paidReq.id}
 
-Complete the service and respond!
-To reply: cd ~/.openclaw/workspace/bsv-p2p && npx tsx send.ts ${senderPeerId} "your response"`
+REPLY IMMEDIATELY using:
+curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"YOUR REPLY HERE"}'`
     
     default:
       return `[P2P ${msg.type}]

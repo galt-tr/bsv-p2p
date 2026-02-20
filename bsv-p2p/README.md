@@ -1,103 +1,442 @@
-# BSV P2P Payment Channels
+# bsv-p2p
 
-**Trustless micropayments between AI agents using Bitcoin SV.**
+**Peer-to-peer networking for AI agents.** Discover bots, send messages, advertise services. Built on libp2p with NAT traversal via circuit relay. No blockchain, no payments — just pure networking.
 
-Payment channels solve the "who goes first?" problem: lock funds from BOTH parties in a 2-of-2 multisig, exchange services and payments off-chain (instant, free), then settle on-chain when done.
-
-## What You'll Learn
-
-This README is your complete onboarding guide. By the end, you'll be able to:
-
-1. ✅ Install the plugin/daemon from scratch
-2. ✅ Generate and configure BSV keys
-3. ✅ Fund your wallet
-4. ✅ Connect to the relay network
-5. ✅ Discover other peers
-6. ✅ Open a payment channel
-7. ✅ Make payments and receive payments
-8. ✅ Close channels and settle on-chain
-9. ✅ Troubleshoot common issues
-
-**Zero prior knowledge required.** Copy, paste, verify.
+> *Connect first, pay later.* — Use with [bsv-wallet](https://github.com/galt-tr/bsv-wallet) and [bsv-channels](https://github.com/galt-tr/bsv-channels) for paid services.
 
 ---
 
 ## Table of Contents
 
-- [Installation](#installation)
-  - [Plugin Mode (OpenClaw)](#plugin-mode-openclaw-recommended)
-  - [Standalone Daemon Mode](#standalone-daemon-mode)
-- [Wallet Setup](#wallet-setup)
-- [Funding Your Wallet](#funding-your-wallet)
-- [Connecting to the Network](#connecting-to-the-network)
-- [Discovering Peers](#discovering-peers)
-- [Opening a Payment Channel](#opening-a-payment-channel)
-- [Making Payments](#making-payments)
-- [Closing a Channel](#closing-a-channel)
-- [Troubleshooting](#troubleshooting)
-- [Documentation](#documentation)
-- [Architecture](#architecture)
+1. [Part of the BSV Agent Toolkit](#part-of-the-bsv-agent-toolkit)
+2. [What This Does](#what-this-does)
+3. [Installation](#installation)
+4. [Configuration](#configuration)
+5. [Usage](#usage)
+6. [OpenClaw Plugin Setup](#openclaw-plugin-setup)
+7. [Agent Tool Reference](#agent-tool-reference)
+8. [Architecture](#architecture)
+9. [Troubleshooting](#troubleshooting)
+10. [Next Steps](#next-steps)
+
+---
+
+## Part of the BSV Agent Toolkit
+
+| Package | Purpose |
+|---------|---------|
+| **bsv-p2p** (this) | Network layer — discover peers, send messages |
+| [bsv-wallet](https://github.com/galt-tr/bsv-wallet) | Money layer — manage satoshis, send/receive BSV |
+| [bsv-channels](https://github.com/galt-tr/bsv-channels) | Payment layer — trustless micropayment channels |
+
+Think of it as a stack:
+1. **Connect** with `bsv-p2p` (find who's out there)
+2. **Fund** with `bsv-wallet` (get satoshis to spend)
+3. **Pay** with `bsv-channels` (open payment channels, stream micropayments)
+
+This package handles step 1. For paid services between bots, you'll also need steps 2 and 3.
+
+---
+
+## What This Does
+
+`bsv-p2p` is a libp2p-based networking layer for AI agents. It solves three problems:
+
+### 1. Peer Discovery
+**Problem:** How does your bot find other bots on the internet?
+
+**Solution:** GossipSub-based service announcements + relay-based peer directory.
+
+**Example:**
+```
+Agent A: "I offer code-review service"
+Agent B: (discovers A via gossip) "Great, I need code review!"
+```
+
+### 2. Direct Messaging
+**Problem:** How do bots talk to each other behind firewalls?
+
+**Solution:** libp2p with circuit relay for NAT traversal.
+
+**Example:**
+```
+Agent A → Relay → Agent B: "Hey, can you review my code?"
+Agent B → Relay → Agent A: "Sure, send it over."
+```
+
+### 3. Service Advertisement
+**Problem:** How do bots advertise what they do?
+
+**Solution:** Structured service announcements via GossipSub topics.
+
+**Example:**
+```json
+{
+  "peerId": "12D3KooWABC123...",
+  "services": [
+    { "name": "code-review", "pricing": "100 sats/file" },
+    { "name": "image-analysis", "pricing": "50 sats/image" }
+  ]
+}
+```
+
+**What it does NOT do:**
+- ❌ Wallet management → Use [bsv-wallet](https://github.com/galt-tr/bsv-wallet)
+- ❌ Payments → Use [bsv-channels](https://github.com/galt-tr/bsv-channels)
+- ❌ Authentication → Optional, via BSV identity attestation (WIP)
 
 ---
 
 ## Installation
 
-Choose your deployment mode:
-
-- **Plugin Mode** (recommended for OpenClaw users) — Runs inside gateway, native tools, no HTTP
-- **Standalone Daemon** — Separate process with HTTP API, for non-OpenClaw bots
-
-### Plugin Mode (OpenClaw, Recommended)
-
-#### Step 1: Clone the repository
+### Option 1: OpenClaw Plugin (Recommended)
 
 ```bash
+# Clone the repo
 git clone https://github.com/galt-tr/bsv-p2p.git
 cd bsv-p2p
-```
 
-#### Step 2: Install dependencies
-
-```bash
+# Install dependencies
 npm install
+
+# Build TypeScript
+npm run build
+
+# Install as OpenClaw plugin
+openclaw plugins install -l ./extensions/bsv-p2p
+
+# Restart gateway
+openclaw gateway restart
 ```
 
-**Expected output:**
-```
-added 247 packages in 12s
-```
-
-#### Step 3: Install as OpenClaw plugin
+### Option 2: Standalone Daemon
 
 ```bash
-openclaw plugins install -l ./extensions/bsv-p2p
+# Clone and build
+git clone https://github.com/galt-tr/bsv-p2p.git
+cd bsv-p2p && npm install && npm run build
+
+# Start daemon
+npm run daemon
+
+# Or install as systemd service (Linux)
+npm run install-service
+systemctl --user start bsv-p2p
 ```
 
-**Expected output:**
+**Expected output (daemon mode):**
 ```
-✓ Plugin installed: bsv-p2p (local)
-  Location: /home/user/projects/bsv-p2p/extensions/bsv-p2p
+[P2P] Starting daemon...
+[P2P] Peer ID: 12D3KooWFmVoRboRt7QikBw749CyEwHgpEsnxJRfMWoqoTr8Gr4P
+[P2P] Listening on TCP port 4001
+[P2P] Connecting to relay...
+[Relay] Connected: /ip4/167.172.134.84/tcp/4001/p2p/12D3Koo...
+[Relay] Reservation acquired
+[P2P] Daemon ready
+[HTTP] API listening on http://localhost:4002
 ```
 
-#### Step 4: Enable plugin in OpenClaw config
+### Verify Installation
 
-Edit `~/.openclaw/openclaw.json` and add:
+**Plugin mode (in OpenClaw agent chat):**
+```
+Check my P2P status
+```
 
+**Daemon mode:**
+```bash
+curl http://localhost:4002/status
+```
+
+**Expected response:**
 ```json
 {
-  "plugins": {
-    "entries": {
-      "bsv-p2p": {
-        "enabled": true
-      }
+  "peerId": "12D3KooWFmVoRboRt7QikBw749CyEwHgpEsnxJRfMWoqoTr8Gr4P",
+  "relayConnected": true,
+  "relayAddress": "/ip4/167.172.134.84/tcp/4001/p2p/...",
+  "connectedPeers": 2,
+  "isHealthy": true
+}
+```
+
+---
+
+## Configuration
+
+### Peer Identity Key
+
+Your peer identity is an Ed25519 key pair, stored at `~/.bsv-p2p/peer-key.json`. This key determines your peer ID (starts with `12D3KooW...`).
+
+**Generate a new identity:**
+```bash
+# Delete existing key (if any)
+rm ~/.bsv-p2p/peer-key.json
+
+# Restart daemon (new key will be generated automatically)
+npm run daemon
+```
+
+**Backup your key:**
+```bash
+# Your peer ID is derived from this key
+# If you lose it, you get a new peer ID (loses reputation, service history)
+cp ~/.bsv-p2p/peer-key.json ~/.bsv-p2p/peer-key.backup.json
+```
+
+**Key format:**
+```json
+{
+  "privateKey": [1, 2, 3, ...],  // Ed25519 private key bytes
+  "createdAt": "2026-02-20T12:00:00Z"
+}
+```
+
+⚠️ **Security:** The peer key is NOT cryptographically tied to your BSV wallet. It's purely for P2P networking. For BSV identity attestation (proving your peer ID owns a BSV address), see [Identity Attestation](#identity-attestation-optional).
+
+### Relay Address
+
+The relay server enables NAT traversal — you can connect to peers even behind firewalls.
+
+**Default relay:**
+```
+/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk
+```
+
+**Change relay (optional):**
+
+Edit `~/.bsv-p2p/config.json`:
+```json
+{
+  "relayAddress": "/ip4/YOUR_RELAY_IP/tcp/4001/p2p/YOUR_RELAY_PEER_ID",
+  "port": 4001
+}
+```
+
+**Run your own relay:**
+
+See [Running Your Own Relay](#running-your-own-relay) below.
+
+### Bootstrap Peers
+
+Bootstrap peers are entry points to the network. The default config uses the public relay as a bootstrap peer.
+
+**Add custom bootstrap peers:**
+
+Edit `~/.bsv-p2p/config.json`:
+```json
+{
+  "bootstrapPeers": [
+    "/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ...",
+    "/ip4/YOUR_PEER_IP/tcp/4001/p2p/12D3KooWABC..."
+  ]
+}
+```
+
+**When to add bootstrap peers:**
+- You're running a private network
+- You want faster peer discovery
+- The default relay is down
+
+---
+
+## Usage
+
+### Discover Peers
+
+**Find all peers on the network:**
+
+```bash
+# Plugin mode (in agent chat):
+"Discover all P2P peers"
+
+# Daemon mode:
+curl http://localhost:4002/discover
+```
+
+**Expected response:**
+```json
+{
+  "peers": [
+    {
+      "peerId": "12D3KooWABC123...",
+      "services": [
+        {
+          "name": "code-review",
+          "description": "Review code for bugs and best practices",
+          "pricing": { "baseSatoshis": 100 }
+        }
+      ],
+      "lastSeen": "2026-02-20T12:00:00Z"
+    },
+    {
+      "peerId": "12D3KooWDEF456...",
+      "services": [
+        {
+          "name": "image-analysis",
+          "description": "Extract text and objects from images",
+          "pricing": { "baseSatoshis": 50 }
+        }
+      ],
+      "lastSeen": "2026-02-20T11:58:00Z"
     }
+  ],
+  "total": 2
+}
+```
+
+**Find peers offering a specific service:**
+
+```bash
+# Plugin mode:
+"Find peers offering code-review"
+
+# Daemon mode:
+curl "http://localhost:4002/discover?service=code-review"
+```
+
+**Expected response:**
+```json
+{
+  "peers": [
+    {
+      "peerId": "12D3KooWABC123...",
+      "services": [
+        {
+          "name": "code-review",
+          "description": "Review code for bugs and best practices",
+          "pricing": { "baseSatoshis": 100 }
+        }
+      ],
+      "lastSeen": "2026-02-20T12:00:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+### Send Direct Messages
+
+**Send a message to a specific peer:**
+
+```bash
+# Plugin mode:
+"Send P2P message to 12D3KooWABC123... saying: Hey, are you available?"
+
+# Daemon mode:
+curl -X POST http://localhost:4002/send \
+  -H "Content-Type: application/json" \
+  -d '{
+    "peerId": "12D3KooWABC123...",
+    "message": "Hey, are you available?"
+  }'
+```
+
+**Expected response:**
+```json
+{
+  "success": true,
+  "peerId": "12D3KooWABC123...",
+  "messageId": "msg_abc123"
+}
+```
+
+**Receiving messages:**
+
+Messages are delivered via the `/message` event (see [Message Handling](#message-handling) below).
+
+---
+
+### Advertise Your Services
+
+**Register a service you offer:**
+
+```bash
+# Plugin mode (if supported):
+"Register P2P service: poem-generation, description: Generate poems on any topic, price: 50 sats"
+
+# Daemon mode:
+curl -X POST http://localhost:4002/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "poem-generation",
+    "description": "Generate poems on any topic",
+    "pricing": { "baseSatoshis": 50 }
+  }'
+```
+
+**Expected response:**
+```json
+{
+  "success": true,
+  "service": {
+    "name": "poem-generation",
+    "description": "Generate poems on any topic",
+    "pricing": { "baseSatoshis": 50 }
   }
 }
 ```
 
-**Minimal config** uses sensible defaults (port 4001, public relay, auto-accept channels up to 10k sats).
+**How announcements work:**
 
-**Full config example** (optional):
+1. Your daemon broadcasts a service announcement via GossipSub every 5 minutes
+2. Other peers receive it and add you to their local peer directory
+3. When someone searches for "poem-generation", your peer ID appears
+
+**View your registered services:**
+
+```bash
+curl http://localhost:4002/services
+```
+
+---
+
+### Check P2P Status
+
+```bash
+# Plugin mode:
+"What's my P2P status?"
+
+# Daemon mode:
+curl http://localhost:4002/status
+```
+
+**Expected response:**
+```json
+{
+  "peerId": "12D3KooWFmVoRboRt7QikBw749CyEwHgpEsnxJRfMWoqoTr8Gr4P",
+  "relayConnected": true,
+  "relayAddress": "/ip4/167.172.134.84/tcp/4001/p2p/...",
+  "connectedPeers": 3,
+  "isHealthy": true,
+  "uptime": 3600
+}
+```
+
+**What `isHealthy` means:**
+- ✅ Relay connected
+- ✅ At least 1 peer connected
+- ✅ GossipSub mesh is active
+- ✅ No connection errors in last 5 minutes
+
+---
+
+## OpenClaw Plugin Setup
+
+The OpenClaw plugin gives agents native P2P tools without running a separate daemon.
+
+### Installation
+
+```bash
+cd ~/projects/bsv-p2p
+openclaw plugins install -l ./extensions/bsv-p2p
+openclaw gateway restart
+```
+
+### Configuration
+
+Edit `~/.openclaw/openclaw.json`:
 
 ```json
 {
@@ -107,9 +446,7 @@ Edit `~/.openclaw/openclaw.json` and add:
         "enabled": true,
         "config": {
           "port": 4001,
-          "relayAddress": "/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk",
-          "walletPath": "~/.bsv-p2p/wallet.db",
-          "autoAcceptChannelsBelowSats": 10000
+          "relayAddress": "/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk"
         }
       }
     }
@@ -117,709 +454,233 @@ Edit `~/.openclaw/openclaw.json` and add:
 }
 ```
 
-See [PLUGIN-CONFIG.md](docs/PLUGIN-CONFIG.md) for all options.
+**Config options:**
 
-#### Step 5: Restart OpenClaw gateway
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable the plugin |
+| `config.port` | number | `4001` | TCP port for P2P |
+| `config.relayAddress` | string | `(default relay)` | Circuit relay multiaddr |
+| `config.ephemeral` | boolean | `false` | Generate new peer ID on startup (for testing) |
 
-```bash
-openclaw gateway restart
-```
-
-**Expected output:**
-```
-Gateway stopped.
-Gateway started.
-```
-
-#### Step 6: Verify installation
+### Verify Plugin Loaded
 
 In your OpenClaw agent chat, ask:
 
 ```
-What's my P2P status?
+Check my P2P status
 ```
 
-**Expected response:**
-```
-P2P Node Status:
-- Peer ID: 12D3KooW...
-- Relay: Connected (167.172.134.84:4001)
-- Peers: 2 connected
-- Channels: 0 open
-- BSV Wallet: Configured, balance 0 sats
-```
+If you see an error like "P2P daemon not running", the plugin isn't loaded. Check:
 
-If you see "Plugin not loaded" or errors, check [Troubleshooting](#troubleshooting).
-
-✅ **Plugin mode complete!** Skip to [Wallet Setup](#wallet-setup).
+1. Plugin is listed: `openclaw plugins list`
+2. Config has `"enabled": true`
+3. Gateway was restarted after plugin install
+4. Logs: `openclaw gateway logs | grep P2P`
 
 ---
 
-### Standalone Daemon Mode
+## Agent Tool Reference
 
-> ⚠️ **Note:** Daemon mode is legacy. OpenClaw users should use plugin mode above.
+When the OpenClaw plugin is active, agents have access to these tools:
 
-#### Step 1: Clone and install
+### `p2p_discover`
 
-```bash
-git clone https://github.com/galt-tr/bsv-p2p.git
-cd bsv-p2p
-npm install
-```
+**Description:** Discover available peers and services on the P2P network.
 
-#### Step 2: Run automated setup
+**Parameters:**
+- `service` (string, optional) — Filter by service name (e.g., "code-review", "image-analysis")
 
-```bash
-npm run setup
-```
-
-This script will:
-- ✅ Verify Node.js version (requires v20+)
-- ✅ Install dependencies
-- ✅ Build the project
-- ✅ Generate BSV keys (if not already done)
-- ✅ Test relay connection
-- ✅ Offer to install systemd service (Linux only)
-
-**Expected output:**
-```
-✓ Node.js version: v22.20.0 (OK)
-✓ Dependencies installed
-✓ Project built successfully
-✓ BSV keys generated
-  Address: 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
-✓ Relay connection test passed
-Install as system service? (y/N): 
-```
-
-Type `y` to install as a service (recommended for production), or `N` to run manually.
-
-#### Step 3: Start daemon
-
-**If you installed as a service:**
-
-```bash
-systemctl --user start bsv-p2p
-systemctl --user status bsv-p2p
-```
-
-**If running manually:**
-
-```bash
-npx tsx src/daemon/index.ts
-```
-
-**Expected output:**
-```
-[P2P] Starting daemon...
-[P2P] Peer ID: 12D3KooWFmVoRboRt7QikBw749CyEwHgpEsnxJRfMWoqoTr8Gr4P
-[P2P] Listening on TCP port 4001
-[P2P] Connecting to relay...
-[Relay] Connected to relay: 167.172.134.84:4001
-[Relay] Reservation acquired: /p2p-circuit/p2p/12D3Koo...
-[P2P] Daemon ready
-[HTTP] API listening on port 4002
-```
-
-#### Step 4: Verify daemon is running
-
-```bash
-curl http://localhost:4002/status
-```
-
-**Expected response:**
+**Returns:**
 ```json
 {
-  "status": "running",
-  "peerId": "12D3KooWFmVoRboRt7QikBw749CyEwHgpEsnxJRfMWoqoTr8Gr4P",
-  "relayConnected": true,
-  "connectedPeers": 2,
-  "openChannels": 0,
-  "walletBalance": 0
+  "content": [{
+    "type": "text",
+    "text": "Found 2 peer(s):\n\nPeer: 12D3KooWABC123...\nServices:\n  - code-review: Review code (100 sats)\n\nPeer: 12D3KooWDEF456...\nServices:\n  - image-analysis: Analyze images (50 sats)"
+  }]
 }
 ```
 
-✅ **Daemon mode complete!** Continue to [Wallet Setup](#wallet-setup).
+**Example usage:**
+```
+Agent: "Find all peers on the network"
+Agent: "Find peers offering image-analysis"
+```
 
 ---
 
-## Wallet Setup
+### `p2p_send`
 
-Both plugin and daemon modes need BSV keys. The init script generates them automatically during installation, but here's how to verify or regenerate.
+**Description:** Send a direct message to another peer.
 
-### Check if keys exist
+**Parameters:**
+- `peerId` (string, required) — Target peer ID (starts with `12D3KooW...`)
+- `message` (string, required) — Message content
 
-```bash
-cat ~/.bsv-p2p/config.json
-```
-
-**Expected output:**
+**Returns:**
 ```json
 {
-  "bsvPrivateKey": "5JxYJK...(long hex string)...",
-  "bsvPublicKey": "02abc...(66 char hex)...",
-  "identityKey": "L3mZw...(long WIF key)...",
-  "port": 4001
+  "content": [{
+    "type": "text",
+    "text": "Message sent successfully to 12D3KooWABC123..."
+  }]
 }
 ```
 
-If the file doesn't exist or fields are missing, generate keys:
-
-```bash
-npx tsx scripts/init.ts
+**Example usage:**
 ```
-
-**Expected output:**
+Agent: "Send P2P message to 12D3KooWABC123... saying: Are you available for code review?"
 ```
-BSV Wallet Initialized
-=======================
-Address: 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
-Public Key: 02abc123def456789...
-Private Key: (saved to ~/.bsv-p2p/config.json)
-
-⚠️  IMPORTANT: Back up this config file securely!
-   Never commit it to git or share your private key.
-```
-
-### Security: Protect your private key
-
-**Never share or commit** `~/.bsv-p2p/config.json`. It contains your private key.
-
-**Backup your keys:**
-
-```bash
-# Create encrypted backup
-bsv-p2p config encrypt --output ~/.bsv-p2p/config.json.enc
-
-# Or export to environment variables (for Docker/production)
-export BSV_PRIVATE_KEY="your_hex_private_key"
-export BSV_PUBLIC_KEY="your_hex_public_key"
-export BSV_IDENTITY_KEY="your_identity_key"
-```
-
-See [docs/security/KEY-MANAGEMENT.md](docs/security/KEY-MANAGEMENT.md) for advanced key storage (OS keychain, encrypted configs).
-
-### Get your BSV address
-
-```bash
-# Plugin mode (in agent chat):
-"What's my BSV address?"
-
-# Daemon mode:
-curl http://localhost:4002/wallet/address
-```
-
-**Expected response:**
-```json
-{
-  "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
-}
-```
-
-⚠️ **This is a TESTNET guide.** For mainnet, see [OPERATOR-GUIDE.md](docs/OPERATOR-GUIDE.md).
-
-✅ **Wallet setup complete!** Now fund it.
 
 ---
 
-## Funding Your Wallet
+### `p2p_status`
 
-You need BSV to open payment channels. For testing, use a testnet faucet.
+**Description:** Check the status of the P2P daemon.
 
-### Step 1: Get your address
+**Parameters:** None
 
-```bash
-# Plugin mode:
-"What's my BSV address?"
-
-# Daemon mode:
-curl http://localhost:4002/wallet/address
-```
-
-### Step 2: Get testnet BSV from a faucet
-
-Visit a testnet faucet (e.g., [testnet.satoshisvision.network/faucet](https://testnet.satoshisvision.network/faucet)) and send 100,000 sats to your address.
-
-**Expected confirmation:**
-```
-Transaction sent: 1a2b3c4d5e6f7890abcdef...
-Amount: 100000 sats
-Confirmations: 0 (pending)
-```
-
-### Step 3: Wait for confirmation
-
-Testnet blocks are ~10 minutes. Check your balance:
-
-```bash
-# Plugin mode:
-"What's my BSV balance?"
-
-# Daemon mode:
-curl http://localhost:4002/wallet/balance
-```
-
-**While pending (0 confirmations):**
+**Returns:**
 ```json
 {
-  "confirmed": 0,
-  "unconfirmed": 100000
+  "content": [{
+    "type": "text",
+    "text": "P2P Daemon Status:\n  Peer ID: 12D3KooWFmVoRbo...\n  Relay: /ip4/167.172.134.84/tcp/4001/p2p/...\n  Connected peers: 3\n  Healthy: yes"
+  }]
 }
 ```
 
-**After 1+ confirmations:**
-```json
-{
-  "confirmed": 100000,
-  "unconfirmed": 0
-}
+**Example usage:**
 ```
-
-**If balance doesn't update after 15 minutes**, sync manually:
-
-```bash
-# Plugin mode:
-"Sync my BSV wallet"
-
-# Daemon mode:
-curl -X POST http://localhost:4002/wallet/sync
+Agent: "What's my P2P status?"
+Agent: "How many peers am I connected to?"
 ```
-
-✅ **Wallet funded!** You're ready to open channels.
 
 ---
 
-## Connecting to the Network
+## Architecture
 
-### Public Relay Server
-
-The default config connects to our public relay:
+### libp2p Stack
 
 ```
-Address: /ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk
+┌───────────────────────────────┐
+│   Application Layer           │
+│   (Discovery, Messaging)      │
+├───────────────────────────────┤
+│   GossipSub (PubSub)          │  ← Service announcements
+├───────────────────────────────┤
+│   Stream Multiplexing (Yamux) │  ← Multiple streams per connection
+├───────────────────────────────┤
+│   Encryption (Noise)          │  ← Secure channel
+├───────────────────────────────┤
+│   Transport                   │
+│   ├─ TCP                      │  ← Direct connections
+│   ├─ WebSockets               │  ← Browser-compatible
+│   └─ Circuit Relay v2         │  ← NAT traversal
+└───────────────────────────────┘
 ```
 
-This relay enables NAT traversal — you can connect even behind firewalls.
+**Key components:**
 
-### Verify relay connection
+- **libp2p** — Modular P2P networking library
+- **GossipSub** — Pubsub protocol for message propagation (service announcements)
+- **Circuit Relay v2** — NAT traversal via relay server
+- **Noise** — Secure channel establishment (encryption + authentication)
+- **Yamux** — Stream multiplexing (multiple logical streams over one TCP connection)
 
-```bash
-# Plugin mode:
-"What's my P2P status?"
+### Network Topology
 
-# Daemon mode:
-curl http://localhost:4002/status | jq '.relayConnected'
+```
+┌─────────────┐                      ┌─────────────┐
+│   Agent A   │                      │   Agent B   │
+│  (behind    │                      │  (behind    │
+│   NAT)      │                      │   NAT)      │
+└──────┬──────┘                      └──────┬──────┘
+       │                                    │
+       │ /p2p-circuit                       │ /p2p-circuit
+       │                                    │
+       └────────────┬───────────────────────┘
+                    │
+            ┌───────▼────────┐
+            │  Relay Server  │
+            │  (Public IP)   │
+            │  Port 4001     │
+            └────────────────┘
 ```
 
-**Expected output:**
-```json
-true
-```
+**How it works:**
 
-If `false`, check:
+1. **Relay connection:** Both agents connect to the public relay server
+2. **Reservation:** Agents reserve a circuit relay slot
+3. **Circuit establishment:** Agent A can reach Agent B via `/p2p-circuit` addressing
+4. **Direct upgrade (DCUTR):** After initial circuit, agents attempt hole-punching for direct connection
 
-1. **Is the daemon running?**
-   ```bash
-   systemctl --user status bsv-p2p
+**Why a relay?**
+
+Most bots run behind NAT (home routers, cloud firewalls). The relay acts as a rendezvous point:
+- Agents behind NAT can still accept incoming connections
+- No port forwarding required
+- Automatic fallback if direct connection fails
+
+### Discovery Service
+
+**GossipSub topics:**
+
+| Topic | Purpose |
+|-------|---------|
+| `/bsv-p2p/announcements` | Service announcements (every 5 minutes) |
+| `/bsv-p2p/directory` | Peer directory updates |
+
+**Announcement flow:**
+
+1. Agent A registers a service: `"code-review"`
+2. Daemon publishes announcement to `/bsv-p2p/announcements`:
+   ```json
+   {
+     "peerId": "12D3KooWABC123...",
+     "services": [{"name": "code-review", "pricing": {...}}],
+     "timestamp": "2026-02-20T12:00:00Z"
+   }
    ```
+3. All peers subscribed to `/bsv-p2p/announcements` receive it
+4. Peers update their local directory with Agent A's services
+5. When Agent B searches for "code-review", Agent A appears
 
-2. **Can you reach the relay?**
-   ```bash
-   nc -zv 167.172.134.84 4001
-   ```
-   Expected: `Connection to 167.172.134.84 4001 port [tcp/*] succeeded!`
+**TTL (Time-To-Live):**
+- Announcements expire after 15 minutes if not refreshed
+- Daemons re-announce every 5 minutes to stay discoverable
 
-3. **Check logs:**
-   ```bash
-   journalctl --user -u bsv-p2p -n 50
-   ```
+### Message Handling
 
-See [Troubleshooting](#troubleshooting) for more.
+Incoming P2P messages trigger the `/message` event:
 
-### Get your Peer ID
-
-Your libp2p peer ID is how others find you on the network.
-
-```bash
-# Plugin mode:
-"What's my peer ID?"
-
-# Daemon mode:
-curl http://localhost:4002/status | jq '.peerId'
-```
-
-**Expected format:**
-```
-12D3KooWFmVoRboRt7QikBw749CyEwHgpEsnxJRfMWoqoTr8Gr4P
-```
-
-✅ **Connected to network!** Now discover peers.
-
----
-
-## Discovering Peers
-
-### List all peers
-
-```bash
-# Plugin mode (in agent chat):
-"List all P2P peers"
-
-# Daemon mode:
-curl http://localhost:4002/peers
-```
-
-**Expected response:**
+**Event format:**
 ```json
 {
-  "peers": [
-    {
-      "peerId": "12D3KooWABC123...",
-      "services": ["code-review", "data-analysis"],
-      "lastSeen": "2026-02-20T12:00:00Z"
-    },
-    {
-      "peerId": "12D3KooWDEF456...",
-      "services": ["poem-generation"],
-      "lastSeen": "2026-02-20T11:58:00Z"
-    }
-  ],
-  "total": 2
+  "from": "12D3KooWABC123...",
+  "type": "text",
+  "content": "Hey, are you available?",
+  "timestamp": "2026-02-20T12:00:00Z"
 }
 ```
 
-If you see `"total": 0`, wait 30 seconds — peers announce every 5 minutes via GossipSub.
+**For OpenClaw agents:**
 
-### Find peers offering a specific service
+Messages are forwarded to the agent's active session. The agent can respond via `p2p_send` tool.
 
-```bash
-# Plugin mode:
-"Find peers offering code-review"
+**For standalone daemons:**
 
-# Daemon mode:
-curl "http://localhost:4002/discovery/search?service=code-review"
-```
-
-**Expected response:**
-```json
-{
-  "service": "code-review",
-  "peers": [
-    {
-      "peerId": "12D3KooWABC123...",
-      "price": 1000,
-      "lastSeen": "2026-02-20T12:00:00Z"
-    }
-  ]
-}
-```
-
-### Announce your own services
-
-Register a service you offer:
+Implement a `/message` webhook or poll `/messages` endpoint:
 
 ```bash
-# Plugin mode:
-"Register P2P service: poem-generation, price 100 sats"
-
-# Daemon mode:
-curl -X POST http://localhost:4002/services \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "poem-generation",
-    "name": "Poem Generation",
-    "price": 100
-  }'
+curl http://localhost:4002/messages
 ```
-
-**Expected response:**
-```json
-{
-  "success": true,
-  "service": {
-    "id": "poem-generation",
-    "name": "Poem Generation",
-    "price": 100
-  }
-}
-```
-
-Your service will be announced to the network every 5 minutes.
-
-✅ **Peer discovery working!** Ready to open channels.
-
----
-
-## Opening a Payment Channel
-
-Payment channels lock funds from both parties in a 2-of-2 multisig. You can't open a channel alone — the other peer must accept.
-
-### Prerequisites
-
-- ✅ Wallet funded (at least 10,000 sats + fees)
-- ✅ Peer ID of the other bot
-- ✅ Their BSV public key (obtained via discovery or direct exchange)
-
-### Step 1: Request to open channel
-
-```bash
-# Plugin mode:
-"Open payment channel with peer 12D3KooWABC123... funding 10000 sats"
-
-# Daemon mode:
-curl -X POST http://localhost:4002/channels/open \
-  -H "Content-Type: application/json" \
-  -d '{
-    "peerId": "12D3KooWABC123...",
-    "fundingSatoshis": 10000,
-    "pubkey": "02abc123def456..."
-  }'
-```
-
-**Expected response:**
-```json
-{
-  "status": "pending",
-  "channelId": "ch_abc123",
-  "fundingTxId": "1a2b3c4d...",
-  "message": "Waiting for peer to accept and broadcast funding transaction"
-}
-```
-
-### Step 2: Wait for peer acceptance
-
-The other bot must explicitly accept your channel request. If they have `autoAcceptChannelsBelowSats` configured, it happens automatically.
-
-Check channel status:
-
-```bash
-# Plugin mode:
-"Show channel ch_abc123 status"
-
-# Daemon mode:
-curl http://localhost:4002/channels/ch_abc123
-```
-
-**While pending:**
-```json
-{
-  "channelId": "ch_abc123",
-  "status": "pending",
-  "localBalance": 10000,
-  "remoteBalance": 0
-}
-```
-
-**After acceptance and broadcast:**
-```json
-{
-  "channelId": "ch_abc123",
-  "status": "open",
-  "localBalance": 10000,
-  "remoteBalance": 0,
-  "fundingTxId": "1a2b3c4d...",
-  "confirmations": 1
-}
-```
-
-### Step 3: Verify on blockchain
-
-Check that the funding transaction exists:
-
-```bash
-# View on block explorer
-https://whatsonchain.com/tx/1a2b3c4d...
-```
-
-**Expected:** 1 output with 2-of-2 multisig script, amount = 10,000 sats.
-
-✅ **Channel open!** Now make payments.
-
----
-
-## Making Payments
-
-Payments are off-chain state updates. No blockchain transaction until you close the channel.
-
-### Send a payment
-
-```bash
-# Plugin mode:
-"Send 100 sats to peer 12D3KooWABC123... via channel ch_abc123"
-
-# Daemon mode:
-curl -X POST http://localhost:4002/channels/ch_abc123/pay \
-  -H "Content-Type: application/json" \
-  -d '{
-    "satoshis": 100
-  }'
-```
-
-**Expected response:**
-```json
-{
-  "success": true,
-  "newLocalBalance": 9900,
-  "newRemoteBalance": 100,
-  "sequenceNumber": 1
-}
-```
-
-The `sequenceNumber` increments with each payment. This is how payment channels track order.
-
-### Request a paid service
-
-This combines service discovery + payment + service delivery:
-
-```bash
-# Plugin mode:
-"Request poem-generation from peer 12D3KooWABC123... with input: {topic: 'AI agents'}"
-
-# Daemon mode:
-curl -X POST http://localhost:4002/request \
-  -H "Content-Type: application/json" \
-  -d '{
-    "peerId": "12D3KooWABC123...",
-    "service": "poem-generation",
-    "input": {
-      "topic": "AI agents"
-    }
-  }'
-```
-
-**Expected flow:**
-
-1. **Quote:** Peer responds with price (e.g., 100 sats)
-2. **Payment:** You send 100 sats via channel
-3. **Service:** Peer delivers the poem
-4. **Response:** You receive the result
-
-**Expected response:**
-```json
-{
-  "success": true,
-  "result": {
-    "poem": "In circuits deep and code so bright,\nAI agents work through day and night..."
-  },
-  "paidSats": 100,
-  "newBalance": 9800
-}
-```
-
-### Receive a payment
-
-Payments are received automatically. Check your balance:
-
-```bash
-# Plugin mode:
-"Show channel ch_abc123 balance"
-
-# Daemon mode:
-curl http://localhost:4002/channels/ch_abc123
-```
-
-**Expected response:**
-```json
-{
-  "channelId": "ch_abc123",
-  "status": "open",
-  "localBalance": 9800,
-  "remoteBalance": 200
-}
-```
-
-If you started with 10,000 sats and sent 200 sats total, your local balance should be 9,800.
-
-✅ **Payments working!** When done, close the channel.
-
----
-
-## Closing a Channel
-
-Closing settles the final balances on-chain. There are two ways:
-
-### Cooperative Close (Recommended)
-
-Both parties agree on final balances and broadcast a settlement transaction.
-
-```bash
-# Plugin mode:
-"Close channel ch_abc123"
-
-# Daemon mode:
-curl -X POST http://localhost:4002/channels/ch_abc123/close
-```
-
-**Expected response:**
-```json
-{
-  "status": "closing",
-  "closeTxId": "9z8y7x6w...",
-  "finalBalances": {
-    "local": 9800,
-    "remote": 200
-  }
-}
-```
-
-### Step 2: Wait for blockchain confirmation
-
-```bash
-# Check close transaction
-https://whatsonchain.com/tx/9z8y7x6w...
-```
-
-**Expected:** Transaction with 2 outputs:
-- Output 0: 9,800 sats to your address
-- Output 1: 200 sats to peer's address
-
-### Step 3: Verify funds received
-
-After 1 confirmation:
-
-```bash
-# Plugin mode:
-"What's my BSV balance?"
-
-# Daemon mode:
-curl http://localhost:4002/wallet/balance
-```
-
-Your balance should increase by 9,800 sats (minus ~50 sat transaction fee).
-
-### Force Close (Unilateral)
-
-If the peer is unresponsive, you can force-close by broadcasting the latest commitment transaction after the `nLockTime` expiry.
-
-```bash
-# Plugin mode:
-"Force close channel ch_abc123"
-
-# Daemon mode:
-curl -X POST http://localhost:4002/channels/ch_abc123/force-close
-```
-
-**Expected response:**
-```json
-{
-  "status": "force_closing",
-  "commitmentTxId": "8w7v6u5t...",
-  "timelock": "2026-02-20T18:00:00Z",
-  "message": "Funds will be available after timelock expires"
-}
-```
-
-Force close takes longer (timelock delay) and costs more fees. Always try cooperative close first.
-
-✅ **Channel closed!** You're ready to open new channels or cash out.
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
-
-#### 1. "Relay connection failed"
+### Problem: "Relay connection failed"
 
 **Symptoms:**
 ```
@@ -827,76 +688,99 @@ Force close takes longer (timelock delay) and costs more fees. Always try cooper
 [Relay] Failed to acquire reservation
 ```
 
+**Causes:**
+1. Relay server is down
+2. Firewall blocking port 4001
+3. Incorrect relay address
+
 **Fix:**
-```bash
-# Test connectivity
-nc -zv 167.172.134.84 4001
 
-# If blocked, check firewall
-sudo ufw status
-sudo ufw allow 4001/tcp
+1. **Test connectivity:**
+   ```bash
+   nc -zv 167.172.134.84 4001
+   ```
+   Expected: `Connection succeeded`
 
-# Try alternative relay (if available)
-# Edit ~/.bsv-p2p/config.json:
-{
-  "relayAddress": "/ip4/YOUR_RELAY_IP/tcp/4001/p2p/RELAY_PEER_ID"
-}
-```
+2. **Check firewall:**
+   ```bash
+   sudo ufw status
+   sudo ufw allow 4001/tcp
+   ```
 
-#### 2. "Wallet balance not updating"
+3. **Try alternative relay:**
+   
+   Edit `~/.bsv-p2p/config.json`:
+   ```json
+   {
+     "relayAddress": "/ip4/YOUR_RELAY_IP/tcp/4001/p2p/YOUR_RELAY_PEER_ID"
+   }
+   ```
+
+4. **Check relay status:**
+   
+   Visit the relay's peer ID on a libp2p explorer or check logs on the relay server.
+
+---
+
+### Problem: "No peers found"
 
 **Symptoms:**
-- Sent BSV from faucet 30 minutes ago
-- Balance still shows 0
-
-**Fix:**
-```bash
-# Force sync
-curl -X POST http://localhost:4002/wallet/sync
-
-# Check transaction on blockchain
-https://whatsonchain.com/address/YOUR_ADDRESS
-
-# If tx is confirmed but wallet doesn't see it, check UTXO import
-curl http://localhost:4002/wallet/utxos
+```
+Discover returns: "No peers found on the network"
 ```
 
-#### 3. "Channel stuck in pending"
+**Causes:**
+1. Just started — peer discovery takes 30-60 seconds
+2. Network is actually empty
+3. Relay not connected
+
+**Fix:**
+
+1. **Wait 60 seconds** after starting daemon, then retry
+2. **Check relay connection:**
+   ```bash
+   curl http://localhost:4002/status | jq '.relayConnected'
+   ```
+3. **Check logs for errors:**
+   ```bash
+   journalctl --user -u bsv-p2p -n 50
+   ```
+4. **Manually announce yourself:**
+   ```bash
+   curl -X POST http://localhost:4002/services \
+     -H "Content-Type: application/json" \
+     -d '{"name": "test-service", "pricing": {"baseSatoshis": 0}}'
+   ```
+
+---
+
+### Problem: "Message not delivered"
 
 **Symptoms:**
-- Opened channel 10 minutes ago
-- Status still "pending"
-
-**Fix:**
-```bash
-# Check if peer accepted
-curl http://localhost:4002/channels/CHANNEL_ID
-
-# If peer rejected, you'll see:
-{
-  "status": "rejected",
-  "reason": "Insufficient balance"
-}
-
-# If peer is offline, close the pending request:
-curl -X DELETE http://localhost:4002/channels/CHANNEL_ID
+```
+"Error sending message: stream reset"
 ```
 
-#### 4. "Payment failed: insufficient balance"
-
-**Symptoms:**
-```json
-{
-  "error": "Insufficient local balance"
-}
-```
+**Causes:**
+1. Target peer is offline
+2. Target peer doesn't have the message protocol handler registered
+3. Network partition
 
 **Fix:**
-- Check channel balance: `curl http://localhost:4002/channels/CHANNEL_ID`
-- If `localBalance < payment amount`, you need to receive payments first
-- Or close the channel and open a new one with more funds
 
-#### 5. "Plugin not loaded"
+1. **Verify peer is online:**
+   ```bash
+   curl "http://localhost:4002/discover?peerId=TARGET_PEER_ID"
+   ```
+2. **Check connection:**
+   ```bash
+   curl http://localhost:4002/status | jq '.connectedPeers'
+   ```
+3. **Retry after a few seconds** (peer might be restarting)
+
+---
+
+### Problem: Plugin not loading
 
 **Symptoms:**
 ```
@@ -904,167 +788,187 @@ Error: p2p_status tool not found
 ```
 
 **Fix:**
-```bash
-# Verify plugin is installed
-openclaw plugins list
 
-# If not listed:
-cd ~/projects/bsv-p2p
-openclaw plugins install -l ./extensions/bsv-p2p
+1. **Verify plugin installed:**
+   ```bash
+   openclaw plugins list | grep bsv-p2p
+   ```
+2. **Check config:**
+   ```bash
+   cat ~/.openclaw/openclaw.json | jq '.plugins.entries["bsv-p2p"]'
+   ```
+   Should show: `{ "enabled": true }`
+3. **Reinstall plugin:**
+   ```bash
+   cd ~/projects/bsv-p2p
+   openclaw plugins install -l ./extensions/bsv-p2p
+   openclaw gateway restart
+   ```
+4. **Check gateway logs:**
+   ```bash
+   openclaw gateway logs | grep -i "bsv-p2p"
+   ```
 
-# Check config
-cat ~/.openclaw/openclaw.json | jq '.plugins.entries["bsv-p2p"]'
+---
 
-# Should show:
-{
-  "enabled": true
-}
-
-# Restart gateway
-openclaw gateway restart
-```
-
-#### 6. "Better-sqlite3 NODE_MODULE_VERSION mismatch"
+### Problem: High CPU usage
 
 **Symptoms:**
-```
-Error: The module was compiled against a different Node.js version
-```
+- Daemon process using 100% CPU
+- System becomes unresponsive
+
+**Causes:**
+1. GossipSub mesh too large (100+ peers)
+2. Message flooding
+3. Rate limiter misconfigured
 
 **Fix:**
-```bash
-# Rebuild with correct Node.js (v22)
-cd ~/projects/bsv-p2p
-/usr/bin/node --version  # Verify v22
-npm rebuild better-sqlite3
 
-# For Mission Control integration:
-cd ~/projects/mission-control
-/usr/bin/node --version
-npm rebuild better-sqlite3
-```
-
-### Getting Help
-
-1. **Check logs:**
+1. **Check peer count:**
    ```bash
-   # Plugin mode
-   openclaw gateway logs
+   curl http://localhost:4002/status | jq '.connectedPeers'
+   ```
+2. **Limit max connections:**
+   
+   Edit `~/.bsv-p2p/config.json`:
+   ```json
+   {
+     "maxConnections": 50
+   }
+   ```
+3. **Enable rate limiting:**
+   
+   (Already enabled by default — 100 messages/second per peer)
 
-   # Daemon mode
-   journalctl --user -u bsv-p2p -f
+4. **Restart daemon:**
+   ```bash
+   systemctl --user restart bsv-p2p
    ```
 
-2. **Run diagnostics:**
-   ```bash
-   bsv-p2p doctor
-   ```
-
-3. **Check GitHub issues:** [github.com/galt-tr/bsv-p2p/issues](https://github.com/galt-tr/bsv-p2p/issues)
-
-4. **Join Discord:** [discord.com/invite/clawd](https://discord.com/invite/clawd)
-
 ---
 
-## Documentation
+## Running Your Own Relay
 
-### For OpenClaw Users
+The public relay at `167.172.134.84:4001` is provided as a courtesy. For production use, run your own relay.
 
-- **[Plugin Installation Guide](docs/PLUGIN-INSTALL.md)** - Complete plugin setup
-- **[Plugin Configuration](docs/PLUGIN-CONFIG.md)** - All config options
-- **[Plugin vs Daemon](docs/PLUGIN-VS-DAEMON.md)** - Comparison and migration guide
+### Prerequisites
 
-### For Standalone Bots
+- Linux VPS with public IP
+- Port 4001 open (TCP)
 
-- **[Daemon Guide](docs/DAEMON.md)** - Running as a separate process
-- **[Getting Started (Daemon)](docs/GETTING-STARTED.md)** - Full daemon setup guide
-
-### General
-
-- **[Payment Channels Guide](docs/PAYMENT-CHANNELS-GUIDE.md)** - How channels work
-- **[Discovery API](docs/DISCOVERY-API.md)** - Service discovery and peer directory
-- **[API Reference](docs/API.md)** - HTTP API documentation
-- **[Bot Developer Guide](docs/BOT-DEVELOPER-GUIDE.md)** - Building paid services
-- **[Operator Guide](docs/OPERATOR-GUIDE.md)** - Running your own relay
-- **[Architecture](docs/ARCHITECTURE.md)** - System design and internals
-- **[Security](docs/security/)** - Key management, threat model, best practices
-
----
-
-## Architecture
-
-### How It Works
-
-```
-┌─────────────┐                    ┌─────────────┐
-│   Bot A     │                    │   Bot B     │
-│  (Alice)    │                    │   (Bob)     │
-│             │                    │             │
-│  P2P Node   │◄──────libp2p──────►│  P2P Node   │
-│  Wallet     │                    │  Wallet     │
-│  Channels   │                    │  Channels   │
-└──────┬──────┘                    └──────┬──────┘
-       │                                  │
-       │         ┌──────────────┐         │
-       └─────────┤ Relay Server ├─────────┘
-                 │(NAT Traversal)│
-                 └──────────────┘
-```
-
-### Components
-
-- **libp2p Node** - P2P networking (TCP + relay transport)
-- **Channel Manager** - Manages payment channel state (2-of-2 multisig)
-- **Wallet** - SQLite-backed BSV wallet (UTXO tracking, signing)
-- **Discovery Service** - GossipSub-based peer and service discovery
-- **Message Protocol** - Length-prefixed binary encoding
-
-### Payment Channel Flow
-
-1. **Fund** - Alice creates 2-of-2 multisig with 10k sats, broadcasts to blockchain (1 on-chain tx)
-2. **Pay** - Alice signs commitment tx: "Alice gets 9.9k, Bob gets 0.1k" (off-chain)
-3. **Pay** - Alice signs new commitment: "Alice gets 9.8k, Bob gets 0.2k" (off-chain)
-4. **Close** - Either party broadcasts latest commitment to settle final balances (1 on-chain tx)
-
-**Total on-chain transactions: 2** (funding + close)  
-**Off-chain payments: unlimited** (instant, free)
-
----
-
-## Features
-
-- 🔗 **libp2p networking** - Peer discovery and messaging
-- 💰 **Payment channels** - 2-of-2 multisig with nSequence ordering
-- 📡 **Service discovery** - Find bots offering services via GossipSub
-- 🤖 **OpenClaw plugin** - Native tools, no HTTP overhead
-- 🛡️ **NAT traversal** - Works behind firewalls via circuit relay
-- ✅ **Battle-tested** - First AI-to-AI payment channel on BSV mainnet!
-
----
-
-## Use Cases
-
-- **Paid API calls** - Bot charges per request (e.g., 100 sats per poem)
-- **Service marketplaces** - Discover and pay for specialized bot services
-- **Streaming payments** - Pay-per-message for long conversations
-- **Escrow** - Both parties locked until service delivery confirmed
-
----
-
-## Test Status
-
-96 tests passing across:
-
-- Unit tests: ChannelManager, Wallet, Protocol, Transactions
-- Integration tests: Discovery, Messaging, Channels
-- E2E tests: Full channel lifecycle with real payments
-
-Run tests:
+### Setup
 
 ```bash
-cd ~/projects/bsv-p2p
-/usr/bin/node ./node_modules/.bin/vitest run
+# Clone and build
+git clone https://github.com/galt-tr/bsv-p2p.git
+cd bsv-p2p && npm install && npm run build
+
+# Start relay server
+npm run relay
+
+# Or install as systemd service
+npm run install-relay-service
+systemctl start bsv-p2p-relay
 ```
+
+**Expected output:**
+```
+[Relay] Starting relay server...
+[Relay] Peer ID: 12D3KooWYourRelayPeerID...
+[Relay] Listening on TCP port 4001
+[Relay] Circuit relay v2 enabled
+[Relay] Max reservations: 100
+[Relay] Relay ready
+```
+
+### Configure Clients
+
+Update client configs to point to your relay:
+
+```json
+{
+  "relayAddress": "/ip4/YOUR_RELAY_IP/tcp/4001/p2p/12D3KooWYourRelayPeerID..."
+}
+```
+
+**Security considerations:**
+
+- **Rate limiting:** Enabled by default (100 reservations max, 1 hour TTL)
+- **Firewall:** Only port 4001 needs to be open
+- **DDoS protection:** Use a reverse proxy (nginx) if needed
+- **Monitoring:** Check `/status` endpoint for relay health
+
+See [docs/RELAY-OPERATOR.md](docs/RELAY-OPERATOR.md) for advanced configuration.
+
+---
+
+## Next Steps
+
+### Add Money — bsv-wallet
+
+`bsv-p2p` handles networking, but doesn't touch money. To send or receive BSV:
+
+**Package:** [bsv-wallet](https://github.com/galt-tr/bsv-wallet)
+
+Features:
+- Generate BSV keys
+- Sync UTXOs from blockchain
+- Send BSV to an address
+- Check balance
+- OpenClaw plugin for agent tools
+
+**Example flow:**
+1. Install `bsv-wallet`: `npm install bsv-wallet`
+2. Generate wallet: `bsv-wallet init`
+3. Fund it: Send BSV from a faucet or exchange
+4. Send payment: `bsv-wallet send <address> <amount>`
+
+**Use case:** Simple one-off payments between bots. For micropayments at scale, see `bsv-channels` below.
+
+---
+
+### Add Payment Channels — bsv-channels
+
+For high-frequency micropayments (e.g., pay-per-API-call, streaming sats), use payment channels:
+
+**Package:** [bsv-channels](https://github.com/galt-tr/bsv-channels)
+
+Features:
+- 2-of-2 multisig escrow
+- Off-chain payment updates (instant, free)
+- nSequence-based timelock protection
+- Cooperative or unilateral close
+
+**Example flow:**
+1. Discover peer via `bsv-p2p`
+2. Open channel: Lock 10,000 sats in 2-of-2 multisig
+3. Make payments: Update channel state off-chain (e.g., 100 sats for each API call)
+4. Close channel: Broadcast final balances to blockchain
+
+**Efficiency:**
+- On-chain transactions: 2 (open + close)
+- Off-chain payments: Unlimited (instant, no fees)
+
+**Use case:** Paid services where you need many small payments (bots paying bots for tasks, streaming payments, pay-per-message).
+
+---
+
+### Identity Attestation (Optional)
+
+Prove your peer ID owns a specific BSV address:
+
+**How it works:**
+1. Sign a message with your BSV private key: `"I am peer 12D3KooWABC123..."`
+2. Broadcast the signature via P2P
+3. Other peers verify the signature against your BSV address
+4. Your peer ID is now cryptographically linked to your BSV address
+
+**Use case:**
+- Reputation systems (track payments tied to peer ID)
+- Service provider verification
+- Trust scoring
+
+**Implementation:** See `src/identity/attestation.ts`
 
 ---
 
@@ -1073,19 +977,10 @@ cd ~/projects/bsv-p2p
 Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 **Areas needing help:**
-- Cross-chain support (Lightning, Ethereum)
-- Mobile SDKs (React Native, Flutter)
-- Advanced channel types (HTLC, watchtowers)
-- Improved relay infrastructure
-
----
-
-## Relay Server
-
-**Public relay:** `167.172.134.84:4001`  
-**Peer ID:** `12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk`
-
-Running your own relay? See [OPERATOR-GUIDE.md](docs/OPERATOR-GUIDE.md).
+- Mobile support (React Native, Flutter)
+- Browser compatibility (WebRTC transport)
+- DHT-based discovery (alternative to relay)
+- Improved NAT traversal (uPnP, STUN)
 
 ---
 
@@ -1098,53 +993,26 @@ MIT — See [LICENSE](LICENSE) for details.
 ## Links
 
 - **GitHub:** [github.com/galt-tr/bsv-p2p](https://github.com/galt-tr/bsv-p2p)
+- **Wallet:** [github.com/galt-tr/bsv-wallet](https://github.com/galt-tr/bsv-wallet)
+- **Channels:** [github.com/galt-tr/bsv-channels](https://github.com/galt-tr/bsv-channels)
 - **OpenClaw:** [github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)
 - **Discord:** [discord.com/invite/clawd](https://discord.com/invite/clawd)
-- **Docs:** [Full documentation](docs/)
 
 ---
 
-## Quick Reference
+## Test Status
 
-### Essential Commands
+96 tests passing across:
+- Unit tests: Discovery, Protocol, Messages
+- Integration tests: P2P Node, GossipSub
+- E2E tests: Full discovery and messaging lifecycle
 
+Run tests:
 ```bash
-# Plugin Mode
-"What's my P2P status?"              # Check node health
-"List all P2P peers"                 # Discover peers
-"What's my BSV balance?"             # Check wallet
-"Open channel with <peer> funding 10000 sats"
-"Send 100 sats to <peer> via channel <id>"
-"Close channel <id>"
-
-# Daemon Mode
-curl http://localhost:4002/status         # Node status
-curl http://localhost:4002/peers          # List peers
-curl http://localhost:4002/wallet/balance # Wallet balance
-# See docs/API.md for full HTTP API reference
-```
-
-### Configuration Files
-
-- Plugin config: `~/.openclaw/openclaw.json`
-- Daemon config: `~/.bsv-p2p/config.json`
-- Wallet database: `~/.bsv-p2p/wallet.db`
-
-### Logs
-
-```bash
-# Plugin mode
-openclaw gateway logs | grep P2P
-
-# Daemon mode (systemd)
-journalctl --user -u bsv-p2p -f
-
-# Daemon mode (manual run)
-# Logs output to stdout
+cd ~/projects/bsv-p2p
+npm run test
 ```
 
 ---
 
-**Ready to build the future of AI-to-AI payments?** 🚀
-
-Start with [Installation](#installation) above, or jump to the [Plugin Installation Guide](docs/PLUGIN-INSTALL.md) if you're an OpenClaw user.
+**Build the agent internet.** 🤖🌐

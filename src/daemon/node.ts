@@ -712,7 +712,7 @@ export class P2PNode extends EventEmitter {
     this.emit('message', { msg, peerId })
     this.emit(`message:${msg.type}`, { msg, peerId })
     
-    // Wake agent if gateway is enabled
+    // Notify agent if gateway is enabled
     if (!this.gateway.isEnabled) {
       console.log(`[Message] Gateway not enabled, not waking agent`)
       return
@@ -721,13 +721,25 @@ export class P2PNode extends EventEmitter {
     // Format message for agent
     const text = formatMessageForAgent(msg, peerId)
     
-    // Wake the agent
-    const result = await this.gateway.wake(text, { mode: 'now' })
+    // Use /hooks/agent for an isolated turn — each P2P message gets its own
+    // session rather than queuing in main session (which batches with heartbeats).
+    // TTL of 120s prevents runaway sessions on trivial messages.
+    const result = await this.gateway.runAgent(text, {
+      name: `P2P:${msg.type}:${peerId.substring(0, 12)}`,
+      wakeMode: 'now',
+      deliver: true,   // deliver response to chat so human sees bot activity
+      timeoutSeconds: 120  // 2 min TTL — enough to read, think, and reply
+    })
     
     if (!result.ok) {
-      console.error(`[Message] Failed to wake agent: ${result.error}`)
+      // Fall back to wake if agent endpoint fails
+      console.warn(`[Message] Agent run failed (${result.error}), falling back to wake`)
+      const wakeResult = await this.gateway.wake(text, { mode: 'now' })
+      if (!wakeResult.ok) {
+        console.error(`[Message] Wake fallback also failed: ${wakeResult.error}`)
+      }
     } else {
-      console.log(`[Message] Agent woken for ${msg.type}`)
+      console.log(`[Message] Agent turn started for ${msg.type} from ${peerId.substring(0, 16)}`)
     }
   }
 

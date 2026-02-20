@@ -27,3 +27,7 @@ export type {
   AgentRunOptions,
   GatewayResponse 
 } from './daemon/gateway.js'
+
+// Wallet
+export { Wallet } from './wallet/index.js'
+export type { WalletConfig, TrackedUTXO } from './wallet/index.js'

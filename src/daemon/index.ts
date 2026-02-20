@@ -279,7 +279,7 @@ class DaemonHealthMonitor {
     
     // PRIMARY CHECK: Are we connected to the relay server?
     // Per circuit-v2 spec, reservation is only valid while connection is maintained.
-    const relayPeerId = '12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
+    const relayPeerId = '12D3KooWBQT3zsYyjgvu5cVvB11d2RkcHaFUBiRKYAfCfGsB27mu'
     const connections = this.node.getConnections()
     const relayConnection = connections.find(c => c.remotePeer.toString() === relayPeerId)
     const relayConnected = !!relayConnection
@@ -336,7 +336,7 @@ class DaemonHealthMonitor {
     
     try {
       // Force reconnect to relay by dialing it
-      const relayMultiaddr = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
+      const relayMultiaddr = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWBQT3zsYyjgvu5cVvB11d2RkcHaFUBiRKYAfCfGsB27mu'
       await this.node.dialRelay(relayMultiaddr)
       
       // Wait for new reservation

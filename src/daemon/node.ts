@@ -35,7 +35,7 @@ import { MessageHandler, formatMessageForAgent, Message, MessageType, TextMessag
 import { DiscoveryService } from './discovery.js'
 
 const KEY_FILE = join(homedir(), '.bsv-p2p', 'peer-key.json')
-const RELAY_ADDR = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
+const RELAY_ADDR = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWBQT3zsYyjgvu5cVvB11d2RkcHaFUBiRKYAfCfGsB27mu'
 
 /**
  * Load existing private key or generate a new one
@@ -158,7 +158,7 @@ export class P2PNode extends EventEmitter {
 
   // Connection maintenance interval (NOT reservation refresh)
   private relayMaintenanceInterval: NodeJS.Timeout | null = null
-  private static readonly RELAY_PEER_ID = '12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk'
+  private static readonly RELAY_PEER_ID = '12D3KooWBQT3zsYyjgvu5cVvB11d2RkcHaFUBiRKYAfCfGsB27mu'
 
   /**
    * Dial the relay server to establish connection (which enables reservation).

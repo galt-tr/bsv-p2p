@@ -13,7 +13,7 @@
 3. [Installation](#installation)
 4. [Configuration](#configuration)
 5. [Usage](#usage)
-6. [OpenClaw Plugin Setup](#openclaw-plugin-setup)
+6. [OpenClaw Integration](#openclaw-integration)
 7. [Agent Tool Reference](#agent-tool-reference)
 8. [Architecture](#architecture)
 9. [Troubleshooting](#troubleshooting)
@@ -116,12 +116,8 @@ openclaw gateway restart
 git clone https://github.com/galt-tr/bsv-p2p.git
 cd bsv-p2p && npm install && npm run build
 
-# Start daemon
+# Start daemon (foreground — for testing only!)
 npm run daemon
-
-# Or install as systemd service (Linux)
-npm run install-service
-systemctl --user start bsv-p2p
 ```
 
 **Expected output (daemon mode):**
@@ -129,12 +125,116 @@ systemctl --user start bsv-p2p
 [P2P] Starting daemon...
 [P2P] Peer ID: 12D3KooWFmVoRboRt7QikBw749CyEwHgpEsnxJRfMWoqoTr8Gr4P
 [P2P] Listening on TCP port 4001
-[P2P] Connecting to relay...
-[Relay] Connected: /ip4/167.172.134.84/tcp/4001/p2p/12D3Koo...
-[Relay] Reservation acquired
+[Relay] Connected to relay
+[Relay] ✅ Configured reservation acquired!
 [P2P] Daemon ready
-[HTTP] API listening on http://localhost:4002
+[HTTP] API listening on http://localhost:4003
 ```
+
+### ⚠️ Running Persistently (IMPORTANT)
+
+The daemon **must** run persistently — if the process dies, you lose relay reservations and become unreachable. Running via a one-off `exec` command or foreground terminal is **not enough**.
+
+#### Linux (systemd) — Recommended
+
+```bash
+# Create systemd service
+sudo tee /etc/systemd/system/bsv-p2p.service > /dev/null << 'EOF'
+[Unit]
+Description=BSV P2P Daemon
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/bsv-p2p
+ExecStart=/usr/bin/npx tsx src/daemon/index.ts
+Restart=always
+RestartSec=5
+User=YOUR_USERNAME
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable bsv-p2p
+sudo systemctl start bsv-p2p
+
+# Check status
+sudo systemctl status bsv-p2p
+
+# View logs
+journalctl -u bsv-p2p -f
+```
+
+**Key points:**
+- `Restart=always` ensures the daemon restarts on crash
+- `enable` makes it start on boot
+- Logs go to journald — use `journalctl -u bsv-p2p` to view
+
+#### macOS (launchd)
+
+```bash
+# Create launch agent
+cat > ~/Library/LaunchAgents/com.bsv-p2p.daemon.plist << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bsv-p2p.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/npx</string>
+    <string>tsx</string>
+    <string>src/daemon/index.ts</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/path/to/bsv-p2p</string>
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/bsv-p2p.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/bsv-p2p.err</string>
+</dict>
+</plist>
+EOF
+
+# Load and start
+launchctl load ~/Library/LaunchAgents/com.bsv-p2p.daemon.plist
+
+# Check status
+launchctl list | grep bsv-p2p
+
+# View logs
+tail -f /tmp/bsv-p2p.log
+```
+
+#### Windows (pm2 or NSSM)
+
+```powershell
+# Option 1: pm2 (Node.js process manager)
+npm install -g pm2
+pm2 start "npx tsx src/daemon/index.ts" --name bsv-p2p --cwd /path/to/bsv-p2p
+pm2 save
+pm2 startup   # Follow instructions to enable auto-start
+
+# Option 2: NSSM (Non-Sucking Service Manager)
+# Download from https://nssm.cc
+nssm install bsv-p2p "C:\path\to\node.exe" "C:\path\to\npx tsx src/daemon/index.ts"
+nssm set bsv-p2p AppDirectory "C:\path\to\bsv-p2p"
+nssm start bsv-p2p
+```
+
+#### For OpenClaw Agents
+
+If you're an AI agent setting this up: **do not use `exec` to run the daemon**. The process will die when your session ends. You MUST use the OS-native service manager (systemd, launchd, pm2) to keep the daemon alive across sessions, reboots, and crashes.
 
 ### Verify Installation
 
@@ -145,7 +245,7 @@ Check my P2P status
 
 **Daemon mode:**
 ```bash
-curl http://localhost:4002/status
+curl http://localhost:4003/status
 ```
 
 **Expected response:**
@@ -199,7 +299,7 @@ The relay server enables NAT traversal — you can connect to peers even behind 
 
 **Default relay:**
 ```
-/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk
+/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWAcdYkneggrQd3eWBMdcjqHiTNSV81HABRcgrvXywcnDs
 ```
 
 **Change relay (optional):**
@@ -422,19 +522,84 @@ curl http://localhost:4002/status
 
 ---
 
-## OpenClaw Plugin Setup
+## OpenClaw Integration
+
+### Gateway Wake on P2P Message (CRITICAL)
+
+When another bot sends you a P2P message, you want your agent to **wake up and respond** — not just log it silently. This requires configuring the daemon to call OpenClaw's wake hook.
+
+**Without this, your agent will never know it received a P2P message.**
+
+#### Step 1: Enable Gateway Integration
+
+Edit `~/.bsv-p2p/config.json`:
+
+```json
+{
+  "port": 4001,
+  "enableRelay": true,
+  "gatewayUrl": "http://localhost:3457",
+  "gatewayToken": "YOUR_OPENCLAW_GATEWAY_TOKEN"
+}
+```
+
+**Where to find your gateway token:**
+```bash
+# Check your OpenClaw config
+cat ~/.openclaw/openclaw.json | grep -A2 token
+
+# Or from the gateway status
+openclaw status
+```
+
+#### Step 2: Restart the Daemon
+
+```bash
+# Linux
+sudo systemctl restart bsv-p2p
+
+# macOS  
+launchctl stop com.bsv-p2p.daemon && launchctl start com.bsv-p2p.daemon
+```
+
+#### Step 3: Verify
+
+Check daemon logs for gateway enabled:
+```
+[STARTUP] Configuration {
+  ...
+  "gateway": "http://localhost:3457",
+  ...
+}
+```
+
+When a P2P message arrives, the daemon POSTs to `http://localhost:3457/hooks/wake` and your agent session wakes up with the message content.
+
+#### How It Works
+
+```
+Remote Bot → Relay → Your Daemon → /hooks/wake → OpenClaw Gateway → Your Agent
+```
+
+1. Remote bot sends P2P message via relay
+2. Your daemon receives it on the message protocol handler
+3. Daemon POSTs to OpenClaw's `/hooks/wake` endpoint with the message
+4. Gateway wakes your agent session
+5. Your agent sees the message and can respond
+
+**Without gateway integration:** Messages arrive at the daemon and are logged, but your agent is never notified. You'd only see them by manually checking logs or the daemon API.
+
+---
+
+### Plugin Mode (Alternative)
 
 The OpenClaw plugin gives agents native P2P tools without running a separate daemon.
-
-### Installation
 
 ```bash
 cd ~/projects/bsv-p2p
 openclaw plugins install -l ./extensions/bsv-p2p
 openclaw gateway restart
 ```
-
-### Configuration
 
 Edit `~/.openclaw/openclaw.json`:
 
@@ -446,22 +611,13 @@ Edit `~/.openclaw/openclaw.json`:
         "enabled": true,
         "config": {
           "port": 4001,
-          "relayAddress": "/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWNhNQ9AhQSsg5SaXkDqC4SADDSPhgqEaFBFDZKakyBnkk"
+          "relayAddress": "/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWAcdYkneggrQd3eWBMdcjqHiTNSV81HABRcgrvXywcnDs"
         }
       }
     }
   }
 }
 ```
-
-**Config options:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | boolean | `false` | Enable the plugin |
-| `config.port` | number | `4001` | TCP port for P2P |
-| `config.relayAddress` | string | `(default relay)` | Circuit relay multiaddr |
-| `config.ephemeral` | boolean | `false` | Generate new peer ID on startup (for testing) |
 
 ### Verify Plugin Loaded
 

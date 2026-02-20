@@ -357,7 +357,7 @@ To Address: ${pay.toAddress}
 TXID: ${pay.txid}
 Vout: ${pay.vout}
 ${pay.memo ? `Memo: ${pay.memo}` : ''}
-${pay.beef ? `BEEF: included (${pay.beef.length} hex chars) — call receiveBeef() on your wallet to import as SPV-proven UTXO` : 'BEEF: not included — you will need to verify this transaction on-chain'}
+${pay.beef ? `BEEF (hex): ${pay.beef}\n\nTo import as SPV-proven UTXO, call your wallet's receiveBeef() with the hex above.` : 'BEEF: not included — you will need to verify this transaction on-chain'}
 
 To acknowledge:
 curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"Payment received, thanks!"}'`

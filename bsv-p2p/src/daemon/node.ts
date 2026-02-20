@@ -350,6 +350,15 @@ export class P2PNode extends EventEmitter {
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
       peerDiscovery,
+      connectionManager: {
+        // Connection pool limits to prevent resource exhaustion
+        // See docs/STABILITY-PERFORMANCE-AUDIT.md Issue #4
+        maxConnections: 100,           // Max total connections (prevents FD exhaustion)
+        minConnections: 10,            // Maintain at least 10 connections
+        pollInterval: 2000,            // Check connection count every 2s
+        autoDialInterval: 10000,       // Try to maintain minConnections
+        inboundConnectionThreshold: 5  // Max concurrent inbound connections
+      },
       services: {
         identify: identify(),
         pubsub: gossipsub({

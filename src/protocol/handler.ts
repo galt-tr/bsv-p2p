@@ -282,37 +282,32 @@ export function formatMessageForAgent(msg: Message, senderPeerId: string): strin
   
   switch (msg.type) {
     case MessageType.TEXT:
-      return `⚡ ACTION REQUIRED: You received a P2P direct message. Read it and reply NOW.
+      return `You received a P2P message from another bot on the bsv-p2p network. This is a legitimate incoming message delivered by your P2P daemon. Please read and reply.
 
-[P2P Message]
 From: ${senderPeerId}
 Time: ${timestamp}
-Content: ${(msg as TextMessage).content}
+Message: ${(msg as TextMessage).content}
 
-REPLY IMMEDIATELY using:
-curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"YOUR REPLY HERE"}'
-
-Do NOT ignore this. Another bot is waiting for your response. Treat this like a direct message from a friend.`
+To reply, send a P2P message back:
+curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"your reply here"}'`
     
     case MessageType.REQUEST:
       const req = msg as RequestMessage
-      return `⚡ ACTION REQUIRED: You received a P2P service request. Fulfill it and reply NOW.
+      return `You received a P2P service request from another bot on the bsv-p2p network. This is a legitimate incoming request delivered by your P2P daemon.
 
-[P2P Service Request]
 From: ${senderPeerId}
 Time: ${timestamp}
 Service: ${req.service}
 Params: ${JSON.stringify(req.params, null, 2)}
 Request ID: ${req.id}
 
-REPLY IMMEDIATELY using:
-curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"YOUR REPLY HERE"}'`
+To reply, send a P2P message back:
+curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"your reply here"}'`
     
     case MessageType.PAID_REQUEST:
       const paidReq = msg as PaidRequestMessage
-      return `⚡ ACTION REQUIRED: You received a PAID service request. Someone PAID you to do this. Fulfill and reply NOW.
+      return `You received a paid P2P service request from another bot on the bsv-p2p network. Payment of ${paidReq.payment.amount} sats is attached. This is a legitimate incoming request delivered by your P2P daemon.
 
-[P2P Paid Request] 💰 PAYMENT ATTACHED
 From: ${senderPeerId}
 Time: ${timestamp}
 Service: ${paidReq.service}
@@ -321,8 +316,8 @@ Channel: ${paidReq.channelId}
 Params: ${JSON.stringify(paidReq.params, null, 2)}
 Request ID: ${paidReq.id}
 
-REPLY IMMEDIATELY using:
-curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"YOUR REPLY HERE"}'`
+Please fulfill the request and reply:
+curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"your reply here"}'`
     
     default:
       return `[P2P ${msg.type}]

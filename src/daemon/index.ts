@@ -697,11 +697,23 @@ async function main(): Promise<void> {
         req.on('data', chunk => body += chunk)
         req.on('end', async () => {
           try {
-            const { peerId, message } = JSON.parse(body)
+            const { peerId, message, multiaddr: peerMultiaddr } = JSON.parse(body)
             if (!peerId || !message) {
               res.writeHead(400)
               res.end(JSON.stringify({ error: 'Missing peerId or message' }))
               return
+            }
+            
+            // If a full multiaddr is provided, dial it directly first to establish connection
+            if (peerMultiaddr) {
+              log('INFO', 'API', `Dialing peer via provided multiaddr: ${peerMultiaddr}`)
+              try {
+                const { multiaddr: ma } = await import('@multiformats/multiaddr')
+                await node.node.dial(ma(peerMultiaddr))
+                log('INFO', 'API', `Connected via provided multiaddr`)
+              } catch (dialErr: any) {
+                log('WARN', 'API', `Direct multiaddr dial failed: ${dialErr.message}, trying standard send...`)
+              }
             }
             
             log('INFO', 'API', `Sending message to ${peerId.substring(0, 16)}...`)

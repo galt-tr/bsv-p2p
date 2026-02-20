@@ -13,6 +13,7 @@ import { dcutr } from '@libp2p/dcutr'
 import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2'
 import { uPnPNAT } from '@libp2p/upnp-nat'
 import { multiaddr } from '@multiformats/multiaddr'
+import { peerIdFromString } from '@libp2p/peer-id'
 import { generateKeyPair, privateKeyFromProtobuf, privateKeyToProtobuf } from '@libp2p/crypto/keys'
 import { EventEmitter } from 'events'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
@@ -174,7 +175,27 @@ export class P2PNode extends EventEmitter {
     
     try {
       await this.node.dial(ma)
-      console.log(`[Relay] Connected to relay - reservation will be established automatically`)
+      console.log(`[Relay] Connected to relay`)
+      
+      // Explicitly request a 'configured' reservation on our relay.
+      // 'discovered' relays are skipped when we already have enough relays from IPFS bootstrap,
+      // but 'configured' relays always get a reservation attempt.
+      const relayPeerId = peerIdFromString(P2PNode.RELAY_PEER_ID)
+      try {
+        const transport = (this.node as any).components?.transportManager?.getTransports?.()
+        if (transport) {
+          for (const t of transport) {
+            if (t.reservationStore) {
+              console.log(`[Relay] Explicitly requesting configured reservation...`)
+              await t.reservationStore.addRelay(relayPeerId, 'configured')
+              console.log(`[Relay] ✅ Configured reservation acquired!`)
+              break
+            }
+          }
+        }
+      } catch (resErr: any) {
+        console.log(`[Relay] Reservation request: ${resErr.message}`)
+      }
     } catch (err: any) {
       console.error(`[Relay] Failed to dial relay: ${err.message}`)
       throw err

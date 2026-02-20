@@ -3,7 +3,13 @@
 import { P2PNode } from './node.js'
 import { GatewayConfig } from './gateway.js'
 import { MessageType, createBaseMessage } from '../protocol/messages.js'
-import { KeychainManager } from '../config/keychain.js'
+// Keychain is optional — may not be available on all systems
+let KeychainManager: any
+try {
+  KeychainManager = (await import('../config/keychain.js')).KeychainManager
+} catch {
+  KeychainManager = null
+}
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -82,11 +88,11 @@ async function loadConfig(): Promise<DaemonConfig> {
     }
   }
   
-  // Priority 1: Check OS keychain for keys
-  const keychain = new KeychainManager()
-  const keychainPrivateKey = await keychain.getPrivateKey()
-  const keychainPublicKey = await keychain.getPublicKey()
-  const keychainIdentityKey = await keychain.getIdentityKey()
+  // Priority 1: Check OS keychain for keys (if available)
+  const keychain = KeychainManager ? new KeychainManager() : null
+  const keychainPrivateKey = keychain ? await keychain.getPrivateKey() : null
+  const keychainPublicKey = keychain ? await keychain.getPublicKey() : null
+  const keychainIdentityKey = keychain ? await keychain.getIdentityKey() : null
   
   if (keychainPrivateKey || keychainPublicKey || keychainIdentityKey) {
     console.log('[Config] Loading keys from OS keychain')
@@ -138,7 +144,7 @@ async function loadConfig(): Promise<DaemonConfig> {
     
     // Migration: If keys exist in plaintext config, offer to migrate
     if (config.bsvPrivateKey || config.bsvPublicKey || config.bsvIdentityKey) {
-      const keychainAvailable = await keychain.isAvailable()
+      const keychainAvailable = keychain ? await keychain.isAvailable() : false
       
       if (keychainAvailable) {
         console.log('[Config] ⚠️  WARNING: Keys found in plaintext config file')

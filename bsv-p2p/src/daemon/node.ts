@@ -20,6 +20,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import * as lp from 'it-length-prefixed'
 import { pipe } from 'it-pipe'
+import { LRUCache } from 'lru-cache'
 import { 
   P2PNodeConfig, 
   PeerInfo, 
@@ -89,7 +90,7 @@ export class P2PNode extends EventEmitter {
   private config: Required<Omit<P2PNodeConfig, 'gateway'>>
   private gatewayConfig: GatewayConfig
   private gateway: GatewayClient
-  private peers: Map<string, PeerInfo> = new Map()
+  private peers: LRUCache<string, PeerInfo>
   private services: ServiceInfo[] = []
   private bsvIdentityKey: string | null = null
   private announcementInterval: NodeJS.Timeout | null = null
@@ -104,6 +105,15 @@ export class P2PNode extends EventEmitter {
     this.config = { ...DEFAULT_CONFIG, ...nodeConfig }
     this.gatewayConfig = gateway ?? {}
     this.gateway = new GatewayClient(this.gatewayConfig)
+    
+    // Initialize bounded peer storage with LRU cache
+    this.peers = new LRUCache<string, PeerInfo>({
+      max: 1000,                          // Max 1000 peers
+      ttl: 1000 * 60 * 60,                // 1 hour TTL
+      dispose: (peer, peerId) => {
+        console.log(`[P2PNode] Evicted peer from cache: ${peerId.substring(0, 16)}...`)
+      }
+    })
   }
   
   /**

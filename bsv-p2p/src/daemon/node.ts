@@ -95,6 +95,8 @@ export class P2PNode extends EventEmitter {
   private announcementInterval: NodeJS.Timeout | null = null
   private messageHandler: MessageHandler | null = null
   private discovery: DiscoveryService | null = null
+  // Track all registered event listeners for cleanup
+  private eventListeners: Array<{ target: any; event: string; handler: any }> = []
 
   constructor(config: P2PNodeConfig = {}) {
     super()
@@ -376,26 +378,34 @@ export class P2PNode extends EventEmitter {
         cleanupIntervalMs: 60000  // 1 minute
       })
 
-      // Forward discovery events
-      this.discovery.on('peer:discovered', (peer: PeerInfo) => {
+      // Forward discovery events (track handlers for cleanup)
+      const peerDiscoveredHandler = (peer: PeerInfo) => {
         this.peers.set(peer.peerId, peer)
         this.emit('peer:discovered', peer)
         console.log(`[Discovery] New peer: ${peer.peerId.substring(0, 16)}... with ${peer.services?.length || 0} services`)
-      })
+      }
+      this.discovery.on('peer:discovered', peerDiscoveredHandler)
+      this.eventListeners.push({ target: this.discovery, event: 'peer:discovered', handler: peerDiscoveredHandler })
 
-      this.discovery.on('peer:updated', (peer: PeerInfo) => {
+      const peerUpdatedHandler = (peer: PeerInfo) => {
         this.peers.set(peer.peerId, peer)
         this.emit('peer:updated', peer)
-      })
+      }
+      this.discovery.on('peer:updated', peerUpdatedHandler)
+      this.eventListeners.push({ target: this.discovery, event: 'peer:updated', handler: peerUpdatedHandler })
 
-      this.discovery.on('peer:stale', (peerId: string) => {
+      const peerStaleHandler = (peerId: string) => {
         this.peers.delete(peerId)
         this.emit('peer:stale', peerId)
-      })
+      }
+      this.discovery.on('peer:stale', peerStaleHandler)
+      this.eventListeners.push({ target: this.discovery, event: 'peer:stale', handler: peerStaleHandler })
 
-      this.discovery.on('announcement', (announcement: PeerAnnouncement) => {
+      const announcementHandler = (announcement: PeerAnnouncement) => {
         this.emit('announcement:received', announcement)
-      })
+      }
+      this.discovery.on('announcement', announcementHandler)
+      this.eventListeners.push({ target: this.discovery, event: 'announcement', handler: announcementHandler })
 
       await this.discovery.start(pubsub, this.multiaddrs)
       console.log('[Discovery] Service initialized')
@@ -408,36 +418,76 @@ export class P2PNode extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    console.log('[Node] Stopping P2P node and cleaning up resources...')
+    
+    // Clear announcement interval
     if (this.announcementInterval) {
       clearInterval(this.announcementInterval)
       this.announcementInterval = null
     }
     
+    // Stop relay maintenance (clears its interval)
+    this.stopRelayConnectionMaintenance()
+    
+    // Remove all tracked event listeners
+    console.log(`[Node] Removing ${this.eventListeners.length} event listeners...`)
+    for (const { target, event, handler } of this.eventListeners) {
+      try {
+        if (target && typeof target.removeEventListener === 'function') {
+          target.removeEventListener(event, handler)
+        } else if (target && typeof target.removeListener === 'function') {
+          target.removeListener(event, handler)
+        } else if (target && typeof target.off === 'function') {
+          target.off(event, handler)
+        }
+      } catch (err) {
+        console.warn(`[Node] Failed to remove listener for ${event}:`, err)
+      }
+    }
+    this.eventListeners = []
+    
+    // Stop discovery service
     if (this.discovery) {
       await this.discovery.stop()
       this.discovery = null
     }
     
-    this.stopRelayConnectionMaintenance()
-
+    // Clear message handler
+    if (this.messageHandler) {
+      this.messageHandler = null
+    }
+    
+    // Stop libp2p node
     if (this.node) {
       await this.node.stop()
       this.node = null
     }
+    
+    // Clear peers map
+    this.peers.clear()
+    
+    console.log('[Node] P2P node stopped successfully')
   }
 
   private setupEventHandlers(): void {
     if (!this.node) return
 
+    // Helper to register and track event listeners
+    const addTrackedListener = (target: any, event: string, handler: any) => {
+      target.addEventListener(event, handler)
+      this.eventListeners.push({ target, event, handler })
+    }
+
     // Peer discovery
-    this.node.addEventListener('peer:discovery', (evt) => {
+    const peerDiscoveryHandler = (evt: any) => {
       const peerId = evt.detail.id.toString()
       console.log(`Discovered peer: ${peerId}`)
       this.emit('peer:discovered', { peerId, multiaddrs: [], protocols: [], lastSeen: Date.now() })
-    })
+    }
+    addTrackedListener(this.node, 'peer:discovery', peerDiscoveryHandler)
 
     // Peer connection
-    this.node.addEventListener('peer:connect', (evt) => {
+    const peerConnectHandler = (evt: any) => {
       const peerId = evt.detail.toString()
       console.log(`Connected to peer: ${peerId}`)
       this.emit('peer:connected', peerId)
@@ -446,10 +496,11 @@ export class P2PNode extends EventEmitter {
       if (peerId === P2PNode.RELAY_PEER_ID) {
         console.log(`[Relay] 🔌 Connected to relay server`)
       }
-    })
+    }
+    addTrackedListener(this.node, 'peer:connect', peerConnectHandler)
 
     // Peer disconnection - CRITICAL for relay health
-    this.node.addEventListener('peer:disconnect', (evt) => {
+    const peerDisconnectHandler = (evt: any) => {
       const peerId = evt.detail.toString()
       console.log(`Disconnected from peer: ${peerId}`)
       this.emit('peer:disconnected', peerId)
@@ -477,14 +528,16 @@ export class P2PNode extends EventEmitter {
           }
         })
       }
-    })
+    }
+    addTrackedListener(this.node, 'peer:disconnect', peerDisconnectHandler)
     
     // Listen for address changes (can indicate reservation changes)
-    this.node.addEventListener('self:peer:update', (evt) => {
+    const selfPeerUpdateHandler = (evt: any) => {
       const addrs = this.multiaddrs
       const relayAddrs = addrs.filter(a => a.includes('p2p-circuit'))
       console.log(`[Node] Address update: ${addrs.length} addrs, ${relayAddrs.length} relay`)
-    })
+    }
+    addTrackedListener(this.node, 'self:peer:update', selfPeerUpdateHandler)
   }
 
   private async subscribeToTopics(): Promise<void> {
@@ -500,7 +553,7 @@ export class P2PNode extends EventEmitter {
     pubsub.subscribe(TOPICS.ANNOUNCE)
     
     // Handle incoming messages
-    pubsub.addEventListener('message', (evt: any) => {
+    const messageHandler = (evt: any) => {
       const topic = evt.detail.topic
       const data = evt.detail.data
       
@@ -513,7 +566,10 @@ export class P2PNode extends EventEmitter {
       } catch (err) {
         console.error('Failed to parse pubsub message:', err)
       }
-    })
+    }
+    
+    pubsub.addEventListener('message', messageHandler)
+    this.eventListeners.push({ target: pubsub, event: 'message', handler: messageHandler })
   }
 
   private handleAnnouncement(announcement: PeerAnnouncement): void {

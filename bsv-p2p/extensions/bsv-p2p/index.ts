@@ -28,6 +28,14 @@ export default function register(api: any) {
   let channelManager: ChannelManager | null = null
   let channelProtocol: ChannelProtocol | null = null
   let wallet: Wallet | null = null
+  let restartCount = 0
+  let healthCheckInterval: NodeJS.Timeout | null = null
+  let isShuttingDown = false
+  
+  const MAX_RESTART_ATTEMPTS = 3
+  const HEALTH_CHECK_INTERVAL_MS = 60000 // 1 minute
+  const MAX_MEMORY_MB = 512 // Disable plugin if memory exceeds this
+  const MAX_CPU_PERCENT = 80 // Disable plugin if CPU exceeds this
 
   // Helper to expand ~ in paths
   function expandPath(path: string): string {
@@ -36,110 +44,233 @@ export default function register(api: any) {
     }
     return path
   }
+  
+  // Health check function
+  function performHealthCheck() {
+    try {
+      if (!p2pNode || isShuttingDown) {
+        return
+      }
+      
+      // Check if node is responsive
+      const peerId = p2pNode.getPeerId()
+      if (!peerId) {
+        api.logger.warn('[BSV P2P] Health check failed: No peer ID')
+        return
+      }
+      
+      // Check memory usage
+      const memUsage = process.memoryUsage()
+      const memMB = memUsage.heapUsed / 1024 / 1024
+      
+      if (memMB > MAX_MEMORY_MB) {
+        api.logger.error(`[BSV P2P] Memory usage too high: ${memMB.toFixed(2)} MB (max ${MAX_MEMORY_MB} MB)`)
+        api.logger.error('[BSV P2P] Disabling plugin to prevent gateway crash')
+        stopService()
+        return
+      }
+      
+      // Log healthy status (debug level to avoid spam)
+      api.logger.debug(`[BSV P2P] Health check passed (Memory: ${memMB.toFixed(2)} MB)`)
+      
+    } catch (err: any) {
+      api.logger.error('[BSV P2P] Health check error:', err.message)
+      // Attempt restart if health check fails repeatedly
+      if (restartCount < MAX_RESTART_ATTEMPTS) {
+        api.logger.warn(`[BSV P2P] Attempting restart (${restartCount + 1}/${MAX_RESTART_ATTEMPTS})`)
+        restartService()
+      }
+    }
+  }
+  
+  // Start service with restart logic
+  async function startService() {
+    try {
+      const cfg: BSVConfig = api.config.plugins?.entries?.['bsv-p2p']?.config || {}
+      
+      api.logger.info('[BSV P2P] Starting P2P node...')
+      
+      // Initialize wallet
+      const walletPath = expandPath(cfg.walletPath || '~/.bsv-p2p/wallet.db')
+      wallet = new Wallet(walletPath)
+      api.logger.debug(`[BSV P2P] Wallet initialized at ${walletPath}`)
+      
+      // Initialize channel manager
+      channelManager = new ChannelManager(wallet)
+      api.logger.debug('[BSV P2P] Channel manager initialized')
+      
+      // Initialize P2P node
+      p2pNode = new P2PNode({
+        port: cfg.port || 4001,
+        bootstrapPeers: cfg.bootstrapPeers || [],
+        wallet,
+        relayAddress: cfg.relayAddress,
+        enableRelay: cfg.enableRelay ?? true,
+        enableMdns: cfg.enableMdns ?? false,
+        maxConnections: cfg.maxConnections || 50
+      } as any) // Type assertion to avoid config mismatch
+      
+      // Register channel manager with P2P node
+      if (p2pNode.registerChannelManager) {
+        p2pNode.registerChannelManager(channelManager)
+      }
+      
+      // Start listening
+      await p2pNode.start()
+      
+      const peerId = p2pNode.getPeerId()
+      api.logger.info(`[BSV P2P] Node started successfully`)
+      api.logger.info(`[BSV P2P] Peer ID: ${peerId}`)
+      
+      // Initialize channel protocol for channel operations
+      if (p2pNode.messages && channelManager) {
+        channelProtocol = new ChannelProtocol({
+          channelManager,
+          messageHandler: p2pNode.messages,
+          peerId,
+          autoAcceptMaxCapacity: 100000 // Auto-accept channels up to 100k sats
+        })
+        api.logger.debug('[BSV P2P] Channel protocol initialized')
+      }
+      
+      // Handle incoming messages
+      p2pNode.on('message', (msg: any) => {
+        api.logger.debug('[BSV P2P] Received message:', {
+          from: msg.from?.substring(0, 16) + '...',
+          type: msg.type
+        })
+        // TODO: Route to appropriate handler based on message type
+      })
+      
+      // Handle peer connections
+      p2pNode.on('peer:connected', (peerId: string) => {
+        api.logger.info(`[BSV P2P] Peer connected: ${peerId.substring(0, 16)}...`)
+      })
+      
+      p2pNode.on('peer:disconnected', (peerId: string) => {
+        api.logger.info(`[BSV P2P] Peer disconnected: ${peerId.substring(0, 16)}...`)
+      })
+      
+      // Start health check interval
+      if (healthCheckInterval) {
+        clearInterval(healthCheckInterval)
+      }
+      healthCheckInterval = setInterval(performHealthCheck, HEALTH_CHECK_INTERVAL_MS)
+      api.logger.debug(`[BSV P2P] Health checks enabled (every ${HEALTH_CHECK_INTERVAL_MS / 1000}s)`)
+      
+      // Reset restart count on successful start
+      restartCount = 0
+      
+    } catch (err: any) {
+      api.logger.error('[BSV P2P] Failed to start P2P node:', err.message)
+      api.logger.error('[BSV P2P] Stack:', err.stack)
+      
+      // Attempt restart if under limit
+      if (restartCount < MAX_RESTART_ATTEMPTS && !isShuttingDown) {
+        restartCount++
+        api.logger.warn(`[BSV P2P] Attempting automatic restart (${restartCount}/${MAX_RESTART_ATTEMPTS})`)
+        await stopService()
+        
+        // Wait before restart (exponential backoff)
+        const delayMs = Math.min(5000 * Math.pow(2, restartCount - 1), 30000)
+        api.logger.info(`[BSV P2P] Waiting ${delayMs}ms before restart...`)
+        await new Promise(resolve => setTimeout(resolve, delayMs))
+        
+        if (!isShuttingDown) {
+          await startService()
+        }
+      } else {
+        api.logger.error('[BSV P2P] Max restart attempts reached. Plugin disabled.')
+        api.logger.error('[BSV P2P] Check configuration and logs. Restart gateway to retry.')
+      }
+    }
+  }
+  
+  // Stop service
+  async function stopService() {
+    try {
+      isShuttingDown = true
+      api.logger.info('[BSV P2P] Stopping P2P node...')
+      
+      // Stop health checks
+      if (healthCheckInterval) {
+        clearInterval(healthCheckInterval)
+        healthCheckInterval = null
+      }
+      
+      if (p2pNode) {
+        await p2pNode.stop()
+        p2pNode = null
+        api.logger.debug('[BSV P2P] P2P node stopped')
+      }
+      
+      if (channelManager) {
+        // await channelManager.shutdown() // If this method exists
+        channelManager = null
+        api.logger.debug('[BSV P2P] Channel manager stopped')
+      }
+      
+      if (wallet) {
+        wallet.close()
+        wallet = null
+        api.logger.debug('[BSV P2P] Wallet closed')
+      }
+      
+      api.logger.info('[BSV P2P] Stopped successfully')
+    } catch (err: any) {
+      api.logger.error('[BSV P2P] Error during shutdown:', err.message)
+    } finally {
+      isShuttingDown = false
+    }
+  }
+  
+  // Restart service
+  async function restartService() {
+    api.logger.warn('[BSV P2P] Restarting service...')
+    await stopService()
+    await startService()
+  }
 
   // Background service: P2P node lifecycle
   api.registerService({
     id: 'bsv-p2p-node',
     
     async start() {
-      try {
-        const cfg: BSVConfig = api.config.plugins?.entries?.['bsv-p2p']?.config || {}
-        
-        api.logger.info('[BSV P2P] Starting P2P node...')
-        
-        // Initialize wallet
-        const walletPath = expandPath(cfg.walletPath || '~/.bsv-p2p/wallet.db')
-        wallet = new Wallet(walletPath)
-        api.logger.debug(`[BSV P2P] Wallet initialized at ${walletPath}`)
-        
-        // Initialize channel manager
-        channelManager = new ChannelManager(wallet)
-        api.logger.debug('[BSV P2P] Channel manager initialized')
-        
-        // Initialize P2P node
-        p2pNode = new P2PNode({
-          port: cfg.port || 4001,
-          bootstrapPeers: cfg.bootstrapPeers || [],
-          wallet,
-          relayAddress: cfg.relayAddress,
-          enableRelay: cfg.enableRelay ?? true,
-          enableMdns: cfg.enableMdns ?? false,
-          maxConnections: cfg.maxConnections || 50
-        } as any) // Type assertion to avoid config mismatch
-        
-        // Register channel manager with P2P node
-        if (p2pNode.registerChannelManager) {
-          p2pNode.registerChannelManager(channelManager)
-        }
-        
-        // Start listening
-        await p2pNode.start()
-        
-        const peerId = p2pNode.getPeerId()
-        api.logger.info(`[BSV P2P] Node started successfully`)
-        api.logger.info(`[BSV P2P] Peer ID: ${peerId}`)
-        
-        // Initialize channel protocol for channel operations
-        if (p2pNode.messages && channelManager) {
-          channelProtocol = new ChannelProtocol({
-            channelManager,
-            messageHandler: p2pNode.messages,
-            peerId,
-            autoAcceptMaxCapacity: 100000 // Auto-accept channels up to 100k sats
-          })
-          api.logger.debug('[BSV P2P] Channel protocol initialized')
-        }
-        
-        // Handle incoming messages
-        p2pNode.on('message', (msg: any) => {
-          api.logger.debug('[BSV P2P] Received message:', {
-            from: msg.from?.substring(0, 16) + '...',
-            type: msg.type
-          })
-          // TODO: Route to appropriate handler based on message type
-        })
-        
-        // Handle peer connections
-        p2pNode.on('peer:connected', (peerId: string) => {
-          api.logger.info(`[BSV P2P] Peer connected: ${peerId.substring(0, 16)}...`)
-        })
-        
-        p2pNode.on('peer:disconnected', (peerId: string) => {
-          api.logger.info(`[BSV P2P] Peer disconnected: ${peerId.substring(0, 16)}...`)
-        })
-        
-      } catch (err: any) {
-        api.logger.error('[BSV P2P] Failed to start P2P node:', err.message)
-        // Don't throw - let gateway continue running
-        await this.stop()
-      }
+      await startService()
     },
     
     async stop() {
+      await stopService()
+    },
+    
+    // Health status for monitoring
+    async status() {
       try {
-        api.logger.info('[BSV P2P] Stopping P2P node...')
-        
-        if (p2pNode) {
-          await p2pNode.stop()
-          p2pNode = null
-          api.logger.debug('[BSV P2P] P2P node stopped')
+        if (!p2pNode) {
+          return {
+            status: 'stopped',
+            restartCount,
+            error: 'P2P node not running'
+          }
         }
         
-        if (channelManager) {
-          // await channelManager.shutdown() // If this method exists
-          channelManager = null
-          api.logger.debug('[BSV P2P] Channel manager stopped')
-        }
+        const memUsage = process.memoryUsage()
+        const memMB = memUsage.heapUsed / 1024 / 1024
         
-        if (wallet) {
-          wallet.close()
-          wallet = null
-          api.logger.debug('[BSV P2P] Wallet closed')
+        return {
+          status: 'running',
+          peerId: p2pNode.getPeerId(),
+          connectedPeers: p2pNode.getConnectedPeers?.()?.length || 0,
+          memoryMB: Math.round(memMB * 100) / 100,
+          restartCount,
+          healthCheckEnabled: healthCheckInterval !== null
         }
-        
-        api.logger.info('[BSV P2P] Stopped successfully')
       } catch (err: any) {
-        api.logger.error('[BSV P2P] Error during shutdown:', err.message)
+        return {
+          status: 'error',
+          error: err.message,
+          restartCount
+        }
       }
     }
   })

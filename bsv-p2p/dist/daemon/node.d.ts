@@ -14,6 +14,7 @@ export declare class P2PNode extends EventEmitter {
     private announcementInterval;
     private messageHandler;
     private discovery;
+    private eventListeners;
     constructor(config?: P2PNodeConfig);
     /**
      * Get the gateway client for external use

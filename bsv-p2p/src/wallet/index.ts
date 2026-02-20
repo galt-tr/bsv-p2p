@@ -245,7 +245,7 @@ export class Wallet {
     await tx.sign()
     
     // Broadcast
-    const txid = await broadcastTransaction(tx.toHex())
+    const txid = (await broadcastTransaction(tx.toHex())).trim()
     
     // Mark UTXOs as spent
     for (const utxo of selected) {

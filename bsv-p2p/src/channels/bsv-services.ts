@@ -136,7 +136,7 @@ export async function broadcastTransaction(txHex: string): Promise<string> {
   }
   
   const txid = await response.text()
-  return txid.replace(/"/g, '') // Remove quotes if present
+  return txid.replace(/"/g, '').trim() // Remove quotes and whitespace
 }
 
 // ChainTracks API for SPV verification

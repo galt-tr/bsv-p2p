@@ -16,6 +16,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import * as lp from 'it-length-prefixed';
 import { pipe } from 'it-pipe';
+import { LRUCache } from 'lru-cache';
 import { DEFAULT_CONFIG, TOPICS } from './types.js';
 import { GatewayClient } from './gateway.js';
 import { ChannelMessageType, deserializeMessage, CHANNEL_PROTOCOL } from '../channels/wire.js';
@@ -69,18 +70,28 @@ export class P2PNode extends EventEmitter {
     config;
     gatewayConfig;
     gateway;
-    peers = new Map();
+    peers;
     services = [];
     bsvIdentityKey = null;
     announcementInterval = null;
     messageHandler = null;
     discovery = null;
+    // Track all registered event listeners for cleanup
+    eventListeners = [];
     constructor(config = {}) {
         super();
         const { gateway, ...nodeConfig } = config;
         this.config = { ...DEFAULT_CONFIG, ...nodeConfig };
         this.gatewayConfig = gateway ?? {};
         this.gateway = new GatewayClient(this.gatewayConfig);
+        // Initialize bounded peer storage with LRU cache
+        this.peers = new LRUCache({
+            max: 1000, // Max 1000 peers
+            ttl: 1000 * 60 * 60, // 1 hour TTL
+            dispose: (peer, peerId) => {
+                console.log(`[P2PNode] Evicted peer from cache: ${peerId.substring(0, 16)}...`);
+            }
+        });
     }
     /**
      * Get the gateway client for external use
@@ -286,6 +297,15 @@ export class P2PNode extends EventEmitter {
             connectionEncrypters: [noise()],
             streamMuxers: [yamux()],
             peerDiscovery,
+            connectionManager: {
+                // Connection pool limits to prevent resource exhaustion
+                // See docs/STABILITY-PERFORMANCE-AUDIT.md Issue #4
+                maxConnections: 100, // Max total connections (prevents FD exhaustion)
+                minConnections: 10, // Maintain at least 10 connections
+                pollInterval: 2000, // Check connection count every 2s
+                autoDialInterval: 10000, // Try to maintain minConnections
+                inboundConnectionThreshold: 5 // Max concurrent inbound connections
+            },
             services: {
                 identify: identify(),
                 pubsub: gossipsub({
@@ -318,23 +338,31 @@ export class P2PNode extends EventEmitter {
                 staleTimeoutMs: 900000, // 15 minutes
                 cleanupIntervalMs: 60000 // 1 minute
             });
-            // Forward discovery events
-            this.discovery.on('peer:discovered', (peer) => {
+            // Forward discovery events (track handlers for cleanup)
+            const peerDiscoveredHandler = (peer) => {
                 this.peers.set(peer.peerId, peer);
                 this.emit('peer:discovered', peer);
                 console.log(`[Discovery] New peer: ${peer.peerId.substring(0, 16)}... with ${peer.services?.length || 0} services`);
-            });
-            this.discovery.on('peer:updated', (peer) => {
+            };
+            this.discovery.on('peer:discovered', peerDiscoveredHandler);
+            this.eventListeners.push({ target: this.discovery, event: 'peer:discovered', handler: peerDiscoveredHandler });
+            const peerUpdatedHandler = (peer) => {
                 this.peers.set(peer.peerId, peer);
                 this.emit('peer:updated', peer);
-            });
-            this.discovery.on('peer:stale', (peerId) => {
+            };
+            this.discovery.on('peer:updated', peerUpdatedHandler);
+            this.eventListeners.push({ target: this.discovery, event: 'peer:updated', handler: peerUpdatedHandler });
+            const peerStaleHandler = (peerId) => {
                 this.peers.delete(peerId);
                 this.emit('peer:stale', peerId);
-            });
-            this.discovery.on('announcement', (announcement) => {
+            };
+            this.discovery.on('peer:stale', peerStaleHandler);
+            this.eventListeners.push({ target: this.discovery, event: 'peer:stale', handler: peerStaleHandler });
+            const announcementHandler = (announcement) => {
                 this.emit('announcement:received', announcement);
-            });
+            };
+            this.discovery.on('announcement', announcementHandler);
+            this.eventListeners.push({ target: this.discovery, event: 'announcement', handler: announcementHandler });
             await this.discovery.start(pubsub, this.multiaddrs);
             console.log('[Discovery] Service initialized');
         }
@@ -345,31 +373,68 @@ export class P2PNode extends EventEmitter {
         console.log(`Listening on: ${this.multiaddrs.join(', ')}`);
     }
     async stop() {
+        console.log('[Node] Stopping P2P node and cleaning up resources...');
+        // Clear announcement interval
         if (this.announcementInterval) {
             clearInterval(this.announcementInterval);
             this.announcementInterval = null;
         }
+        // Stop relay maintenance (clears its interval)
+        this.stopRelayConnectionMaintenance();
+        // Remove all tracked event listeners
+        console.log(`[Node] Removing ${this.eventListeners.length} event listeners...`);
+        for (const { target, event, handler } of this.eventListeners) {
+            try {
+                if (target && typeof target.removeEventListener === 'function') {
+                    target.removeEventListener(event, handler);
+                }
+                else if (target && typeof target.removeListener === 'function') {
+                    target.removeListener(event, handler);
+                }
+                else if (target && typeof target.off === 'function') {
+                    target.off(event, handler);
+                }
+            }
+            catch (err) {
+                console.warn(`[Node] Failed to remove listener for ${event}:`, err);
+            }
+        }
+        this.eventListeners = [];
+        // Stop discovery service
         if (this.discovery) {
             await this.discovery.stop();
             this.discovery = null;
         }
-        this.stopRelayConnectionMaintenance();
+        // Clear message handler
+        if (this.messageHandler) {
+            this.messageHandler = null;
+        }
+        // Stop libp2p node
         if (this.node) {
             await this.node.stop();
             this.node = null;
         }
+        // Clear peers map
+        this.peers.clear();
+        console.log('[Node] P2P node stopped successfully');
     }
     setupEventHandlers() {
         if (!this.node)
             return;
+        // Helper to register and track event listeners
+        const addTrackedListener = (target, event, handler) => {
+            target.addEventListener(event, handler);
+            this.eventListeners.push({ target, event, handler });
+        };
         // Peer discovery
-        this.node.addEventListener('peer:discovery', (evt) => {
+        const peerDiscoveryHandler = (evt) => {
             const peerId = evt.detail.id.toString();
             console.log(`Discovered peer: ${peerId}`);
             this.emit('peer:discovered', { peerId, multiaddrs: [], protocols: [], lastSeen: Date.now() });
-        });
+        };
+        addTrackedListener(this.node, 'peer:discovery', peerDiscoveryHandler);
         // Peer connection
-        this.node.addEventListener('peer:connect', (evt) => {
+        const peerConnectHandler = (evt) => {
             const peerId = evt.detail.toString();
             console.log(`Connected to peer: ${peerId}`);
             this.emit('peer:connected', peerId);
@@ -377,9 +442,10 @@ export class P2PNode extends EventEmitter {
             if (peerId === P2PNode.RELAY_PEER_ID) {
                 console.log(`[Relay] 🔌 Connected to relay server`);
             }
-        });
+        };
+        addTrackedListener(this.node, 'peer:connect', peerConnectHandler);
         // Peer disconnection - CRITICAL for relay health
-        this.node.addEventListener('peer:disconnect', (evt) => {
+        const peerDisconnectHandler = (evt) => {
             const peerId = evt.detail.toString();
             console.log(`Disconnected from peer: ${peerId}`);
             this.emit('peer:disconnected', peerId);
@@ -407,13 +473,15 @@ export class P2PNode extends EventEmitter {
                     }
                 });
             }
-        });
+        };
+        addTrackedListener(this.node, 'peer:disconnect', peerDisconnectHandler);
         // Listen for address changes (can indicate reservation changes)
-        this.node.addEventListener('self:peer:update', (evt) => {
+        const selfPeerUpdateHandler = (evt) => {
             const addrs = this.multiaddrs;
             const relayAddrs = addrs.filter(a => a.includes('p2p-circuit'));
             console.log(`[Node] Address update: ${addrs.length} addrs, ${relayAddrs.length} relay`);
-        });
+        };
+        addTrackedListener(this.node, 'self:peer:update', selfPeerUpdateHandler);
     }
     async subscribeToTopics() {
         if (!this.node)
@@ -426,7 +494,7 @@ export class P2PNode extends EventEmitter {
         // Subscribe to announcement topic
         pubsub.subscribe(TOPICS.ANNOUNCE);
         // Handle incoming messages
-        pubsub.addEventListener('message', (evt) => {
+        const messageHandler = (evt) => {
             const topic = evt.detail.topic;
             const data = evt.detail.data;
             try {
@@ -438,7 +506,9 @@ export class P2PNode extends EventEmitter {
             catch (err) {
                 console.error('Failed to parse pubsub message:', err);
             }
-        });
+        };
+        pubsub.addEventListener('message', messageHandler);
+        this.eventListeners.push({ target: pubsub, event: 'message', handler: messageHandler });
     }
     handleAnnouncement(announcement) {
         // Don't process our own announcements

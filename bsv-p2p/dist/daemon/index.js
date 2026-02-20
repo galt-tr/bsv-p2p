@@ -49,16 +49,31 @@ function getDataDir() {
 }
 function loadConfig() {
     const configPath = join(getDataDir(), 'config.json');
+    let config = DEFAULT_DAEMON_CONFIG;
+    // Load from file if exists
     if (existsSync(configPath)) {
         try {
             const data = readFileSync(configPath, 'utf-8');
-            return { ...DEFAULT_DAEMON_CONFIG, ...JSON.parse(data) };
+            config = { ...DEFAULT_DAEMON_CONFIG, ...JSON.parse(data) };
         }
         catch {
-            return DEFAULT_DAEMON_CONFIG;
+            config = DEFAULT_DAEMON_CONFIG;
         }
     }
-    return DEFAULT_DAEMON_CONFIG;
+    // Override with environment variables if present
+    if (process.env.BSV_PRIVATE_KEY) {
+        config.bsvPrivateKey = process.env.BSV_PRIVATE_KEY;
+        console.log('[Config] Using BSV_PRIVATE_KEY from environment');
+    }
+    if (process.env.BSV_PUBLIC_KEY) {
+        config.bsvPublicKey = process.env.BSV_PUBLIC_KEY;
+        console.log('[Config] Using BSV_PUBLIC_KEY from environment');
+    }
+    if (process.env.BSV_IDENTITY_KEY) {
+        config.bsvIdentityKey = process.env.BSV_IDENTITY_KEY;
+        console.log('[Config] Using BSV_IDENTITY_KEY from environment');
+    }
+    return config;
 }
 function savePidFile(pid) {
     const pidPath = join(getDataDir(), 'daemon.pid');
@@ -213,6 +228,35 @@ async function waitForRelayReservation(node, timeoutMs) {
     log('ERROR', 'STARTUP', '❌ Timeout waiting for relay reservation');
     return false;
 }
+/**
+ * Background task to retry relay reservation with exponential backoff
+ */
+function startRelayRetryBackgroundTask(node, initialTimeoutMs) {
+    let retryAttempt = 0;
+    const maxBackoffMs = 5 * 60 * 1000; // Cap at 5 minutes
+    async function retryRelay() {
+        // Exponential backoff: 30s, 60s, 120s, 240s, 300s (capped at 5min)
+        const backoffMs = Math.min(30000 * Math.pow(2, retryAttempt), maxBackoffMs);
+        retryAttempt++;
+        log('INFO', 'RELAY_RETRY', `Retrying relay reservation in ${Math.floor(backoffMs / 1000)}s (attempt #${retryAttempt})`);
+        await new Promise(r => setTimeout(r, backoffMs));
+        // Check if we now have relay reservation
+        const addrs = node.multiaddrs;
+        const relayAddrs = addrs.filter(a => a.includes('p2p-circuit'));
+        if (relayAddrs.length > 0) {
+            log('INFO', 'RELAY_RETRY', '✅ Relay reservation acquired on retry!', { relayAddr: relayAddrs[0] });
+            // Success - stop retrying
+            return;
+        }
+        log('WARN', 'RELAY_RETRY', `Still no relay reservation (attempt #${retryAttempt})`);
+        // Continue retrying indefinitely with exponential backoff
+        retryRelay();
+    }
+    // Start the retry loop (non-blocking)
+    retryRelay().catch(err => {
+        log('ERROR', 'RELAY_RETRY', 'Relay retry error:', err);
+    });
+}
 async function main() {
     const config = loadConfig();
     const envGateway = loadGatewayConfigFromEnv();
@@ -260,9 +304,12 @@ async function main() {
         // Wait for relay reservation with timeout
         const hasReservation = await waitForRelayReservation(node, config.relayReservationTimeoutMs);
         if (!hasReservation) {
-            log('ERROR', 'STARTUP', 'FATAL: Could not acquire relay reservation');
-            log('ERROR', 'STARTUP', 'Check: Is relay server running? Is network accessible?');
-            process.exit(1);
+            log('WARN', 'STARTUP', '⚠️  Could not acquire relay reservation within timeout');
+            log('WARN', 'STARTUP', 'Continuing without relay (graceful degradation)');
+            log('WARN', 'STARTUP', 'Relay retry will run in background with exponential backoff');
+            log('INFO', 'STARTUP', 'Check: Is relay server running? Is network accessible?');
+            // Start background retry with exponential backoff (don't block startup)
+            startRelayRetryBackgroundTask(node, config.relayReservationTimeoutMs);
         }
         // Log all addresses
         const addrs = node.multiaddrs;

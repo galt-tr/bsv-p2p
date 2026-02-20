@@ -255,6 +255,23 @@ export class MessageHandler extends EventEmitter {
     // Try direct dial
     return await this.node.dial(multiaddr(`/p2p/${peerId}`))
   }
+
+  /**
+   * Cleanup and stop the message handler
+   */
+  stop(): void {
+    // Stop rate limiter
+    this.rateLimiter.stop()
+    
+    // Clear pending requests
+    for (const [id, pending] of this.pendingRequests.entries()) {
+      clearTimeout(pending.timeout)
+      pending.reject(new Error('MessageHandler stopped'))
+    }
+    this.pendingRequests.clear()
+    
+    console.log('[MessageHandler] Stopped')
+  }
 }
 
 /**
@@ -302,23 +319,5 @@ To reply: cd ~/.openclaw/workspace/bsv-p2p && npx tsx send.ts ${senderPeerId} "y
 From: ${senderPeerId}
 Time: ${timestamp}
 Data: ${JSON.stringify(msg, null, 2)}`
-  }
-}
-
-  /**
-   * Cleanup and stop the message handler
-   */
-  stop(): void {
-    // Stop rate limiter
-    this.rateLimiter.stop()
-    
-    // Clear pending requests
-    for (const [id, pending] of this.pendingRequests.entries()) {
-      clearTimeout(pending.timeout)
-      pending.reject(new Error('MessageHandler stopped'))
-    }
-    this.pendingRequests.clear()
-    
-    console.log('[MessageHandler] Stopped')
   }
 }

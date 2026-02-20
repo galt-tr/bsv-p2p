@@ -26,13 +26,36 @@
   "keywords": [
     "bsv",
     "bitcoin",
+    "bitcoin-sv",
     "libp2p",
     "p2p",
     "payment-channels",
-    "openclaw"
+    "micropayments",
+    "openclaw",
+    "ai-agents",
+    "agent-communication",
+    "cryptocurrency",
+    "blockchain"
   ],
-  "author": "",
+  "author": "Galt-TR",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/galt-tr/bsv-p2p.git"
+  },
+  "bugs": {
+    "url": "https://github.com/galt-tr/bsv-p2p/issues"
+  },
+  "homepage": "https://github.com/galt-tr/bsv-p2p#readme",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SKILL.md"
+  ],
   "dependencies": {
     "@bsv/sdk": "^1.2.62",
     "@bsv/wallet-toolbox": "^1.0.51",

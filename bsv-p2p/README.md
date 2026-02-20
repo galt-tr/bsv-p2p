@@ -6,7 +6,27 @@ When two bots need to exchange services, who goes first? Pay upfront and risk no
 
 **Payment channels solve this** by locking funds from BOTH parties in a 2-of-2 multisig. Neither can take the money without cooperation. Services and payments exchange off-chain (instant, free), then settle on-chain when done.
 
-## Installation Modes
+## Installation
+
+### npm (Coming Soon)
+
+Once published to npm:
+
+```bash
+# Global installation
+npm install -g bsv-p2p
+
+# Run setup wizard
+bsv-p2p setup
+
+# Start daemon
+bsv-p2p daemon start
+
+# Or use npx without installing
+npx bsv-p2p setup
+```
+
+### Installation Modes
 
 1. **OpenClaw Plugin** (recommended) - Runs inside OpenClaw gateway, no separate daemon needed
 2. **Standalone Daemon** - Separate process for non-OpenClaw bots

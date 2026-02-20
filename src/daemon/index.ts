@@ -10,7 +10,7 @@ try {
 } catch {
   KeychainManager = null
 }
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { createServer, IncomingMessage, ServerResponse } from 'http'
@@ -197,10 +197,11 @@ function savePidFile(pid: number): void {
 
 function removePidFile(): void {
   const pidPath = join(getDataDir(), 'daemon.pid')
-  if (existsSync(pidPath)) {
-    const { unlinkSync } = require('fs')
-    unlinkSync(pidPath)
-  }
+  try {
+    if (existsSync(pidPath)) {
+      unlinkSync(pidPath)
+    }
+  } catch { /* ignore */ }
 }
 
 interface HealthStatus {
@@ -279,24 +280,31 @@ class DaemonHealthMonitor {
     
     // PRIMARY CHECK: Are we connected to the relay server?
     // Per circuit-v2 spec, reservation is only valid while connection is maintained.
-    const relayPeerId = '12D3KooWGND4cnkd8GEdUUk3NMxez1rxRxdkzAdAS5VCRb1MTMyQ'
+    const relayPeerId = '12D3KooWAcdYkneggrQd3eWBMdcjqHiTNSV81HABRcgrvXywcnDs'
     const connections = this.node.getConnections()
     const relayConnection = connections.find(c => c.remotePeer.toString() === relayPeerId)
     const relayConnected = !!relayConnection
     
-    if (!relayConnected) {
-      errors.push('Not connected to relay server (reservation INVALID)')
-    }
+    // Don't error yet — check for any relay reservation first (via other peers counts too)
     
     // SECONDARY CHECK: Do we have relay addresses in our multiaddrs?
     // This can lag behind the actual connection state.
     const addrs = this.node.multiaddrs
-    const relayAddrs = addrs.filter(a => a.includes('p2p-circuit') && a.includes('167.172.134.84'))
+    const relayAddrs = addrs.filter(a => a.includes('p2p-circuit'))
+    const ownRelayAddrs = relayAddrs.filter(a => a.includes('167.172.134.84'))
     const hasRelayReservation = relayAddrs.length > 0
+    const hasOwnRelayReservation = ownRelayAddrs.length > 0
     
     if (!hasRelayReservation && relayConnected) {
       // Connected but no address yet - may still be establishing reservation
       log('DEBUG', 'HEALTH', 'Connected to relay but reservation not yet visible')
+    }
+    if (hasRelayReservation && !hasOwnRelayReservation) {
+      log('DEBUG', 'HEALTH', `Have ${relayAddrs.length} relay addrs via other peers (not our relay)`)
+    }
+    
+    if (!relayConnected && !hasRelayReservation) {
+      errors.push('No relay connection and no relay reservations available')
     }
     
     // Check if relay address changed (might indicate reconnection)
@@ -336,7 +344,7 @@ class DaemonHealthMonitor {
     
     try {
       // Force reconnect to relay by dialing it
-      const relayMultiaddr = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWGND4cnkd8GEdUUk3NMxez1rxRxdkzAdAS5VCRb1MTMyQ'
+      const relayMultiaddr = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWAcdYkneggrQd3eWBMdcjqHiTNSV81HABRcgrvXywcnDs'
       await this.node.dialRelay(relayMultiaddr)
       
       // Wait for new reservation
@@ -366,10 +374,10 @@ async function waitForRelayReservation(node: P2PNode, timeoutMs: number): Promis
   
   while (Date.now() - startTime < timeoutMs) {
     const addrs = node.multiaddrs
-    const relayAddrs = addrs.filter(a => a.includes('p2p-circuit') && a.includes('167.172.134.84'))
+    const relayAddrs = addrs.filter(a => a.includes('p2p-circuit'))
     
     if (relayAddrs.length > 0) {
-      log('INFO', 'STARTUP', '✅ Relay reservation acquired!', { relayAddr: relayAddrs[0] })
+      log('INFO', 'STARTUP', '✅ Relay reservation acquired!', { relayAddr: relayAddrs[0], total: relayAddrs.length })
       return true
     }
     

@@ -401,7 +401,7 @@ ${msg.memo ? `Memo: ${msg.memo}` : ''}`;
         }
         log('INFO', 'STARTUP', '='.repeat(60));
         // Start HTTP API server for sending messages
-        const API_PORT = 4002;
+        const API_PORT = 4003;
         const apiServer = createServer(async (req, res) => {
             // CORS headers
             res.setHeader('Access-Control-Allow-Origin', '*');

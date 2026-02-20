@@ -299,6 +299,44 @@ async function waitForRelayReservation(node: P2PNode, timeoutMs: number): Promis
   return false
 }
 
+/**
+ * Background task to retry relay reservation with exponential backoff
+ */
+function startRelayRetryBackgroundTask(node: P2PNode, initialTimeoutMs: number): void {
+  let retryAttempt = 0
+  const maxBackoffMs = 5 * 60 * 1000  // Cap at 5 minutes
+  
+  async function retryRelay() {
+    // Exponential backoff: 30s, 60s, 120s, 240s, 300s (capped at 5min)
+    const backoffMs = Math.min(30000 * Math.pow(2, retryAttempt), maxBackoffMs)
+    retryAttempt++
+    
+    log('INFO', 'RELAY_RETRY', `Retrying relay reservation in ${Math.floor(backoffMs / 1000)}s (attempt #${retryAttempt})`)
+    
+    await new Promise(r => setTimeout(r, backoffMs))
+    
+    // Check if we now have relay reservation
+    const addrs = node.multiaddrs
+    const relayAddrs = addrs.filter(a => a.includes('p2p-circuit'))
+    
+    if (relayAddrs.length > 0) {
+      log('INFO', 'RELAY_RETRY', '✅ Relay reservation acquired on retry!', { relayAddr: relayAddrs[0] })
+      // Success - stop retrying
+      return
+    }
+    
+    log('WARN', 'RELAY_RETRY', `Still no relay reservation (attempt #${retryAttempt})`)
+    
+    // Continue retrying indefinitely with exponential backoff
+    retryRelay()
+  }
+  
+  // Start the retry loop (non-blocking)
+  retryRelay().catch(err => {
+    log('ERROR', 'RELAY_RETRY', 'Relay retry error:', err)
+  })
+}
+
 async function main(): Promise<void> {
   const config = loadConfig()
   
@@ -356,9 +394,13 @@ async function main(): Promise<void> {
     const hasReservation = await waitForRelayReservation(node, config.relayReservationTimeoutMs)
     
     if (!hasReservation) {
-      log('ERROR', 'STARTUP', 'FATAL: Could not acquire relay reservation')
-      log('ERROR', 'STARTUP', 'Check: Is relay server running? Is network accessible?')
-      process.exit(1)
+      log('WARN', 'STARTUP', '⚠️  Could not acquire relay reservation within timeout')
+      log('WARN', 'STARTUP', 'Continuing without relay (graceful degradation)')
+      log('WARN', 'STARTUP', 'Relay retry will run in background with exponential backoff')
+      log('INFO', 'STARTUP', 'Check: Is relay server running? Is network accessible?')
+      
+      // Start background retry with exponential backoff (don't block startup)
+      startRelayRetryBackgroundTask(node, config.relayReservationTimeoutMs)
     }
     
     // Log all addresses

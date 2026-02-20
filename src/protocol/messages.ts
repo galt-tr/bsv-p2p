@@ -177,6 +177,9 @@ export interface PaymentMessage extends BaseMessage {
   amount: number         // Satoshis sent
   toAddress: string      // Recipient's BSV address
   memo?: string          // Optional payment memo
+  beef?: string          // BEEF envelope (hex) — SPV-verifiable payment data
+                         // Receiver calls receiveBeef() to import UTXO as proven
+                         // without needing WhatsOnChain or any external lookup
 }
 
 // Payment acknowledgment

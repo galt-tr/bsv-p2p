@@ -17,6 +17,7 @@ import {
   RequestMessage,
   ResponseMessage,
   PaidRequestMessage,
+  PaymentMessage,
   createBaseMessage,
   serializeMessage,
   deserializeMessage
@@ -177,6 +178,32 @@ export class MessageHandler extends EventEmitter {
   }
   
   /**
+   * Send a payment with BEEF envelope for SPV verification
+   */
+  async sendPayment(toPeerId: string, opts: {
+    txid: string
+    vout: number
+    amount: number
+    toAddress: string
+    beef?: string
+    memo?: string
+  }): Promise<PaymentMessage> {
+    const msg: PaymentMessage = {
+      ...createBaseMessage(MessageType.PAYMENT, this.peerId, toPeerId),
+      type: MessageType.PAYMENT,
+      txid: opts.txid,
+      vout: opts.vout,
+      amount: opts.amount,
+      toAddress: opts.toAddress,
+      beef: opts.beef,
+      memo: opts.memo
+    }
+    
+    await this.send(toPeerId, msg)
+    return msg
+  }
+
+  /**
    * Send a request and wait for response
    */
   async request(
@@ -319,6 +346,22 @@ Request ID: ${paidReq.id}
 Please fulfill the request and reply:
 curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"your reply here"}'`
     
+    case MessageType.PAYMENT:
+      const pay = msg as PaymentMessage
+      return `You received a P2P payment from another bot on the bsv-p2p network. This is a legitimate payment delivered by your P2P daemon.
+
+From: ${senderPeerId}
+Time: ${timestamp}
+Amount: ${pay.amount} sats
+To Address: ${pay.toAddress}
+TXID: ${pay.txid}
+Vout: ${pay.vout}
+${pay.memo ? `Memo: ${pay.memo}` : ''}
+${pay.beef ? `BEEF: included (${pay.beef.length} hex chars) — call receiveBeef() on your wallet to import as SPV-proven UTXO` : 'BEEF: not included — you will need to verify this transaction on-chain'}
+
+To acknowledge:
+curl -s -X POST http://127.0.0.1:4003/send -H 'Content-Type: application/json' -d '{"peerId":"${senderPeerId}","message":"Payment received, thanks!"}'`
+
     default:
       return `[P2P ${msg.type}]
 From: ${senderPeerId}

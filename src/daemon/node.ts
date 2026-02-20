@@ -756,6 +756,16 @@ export class P2PNode extends EventEmitter {
   }
 
   /**
+   * Send a payment with BEEF to another peer
+   */
+  async sendPayment(toPeerId: string, opts: {
+    txid: string, vout: number, amount: number, toAddress: string, beef?: string, memo?: string
+  }): Promise<void> {
+    if (!this.messageHandler) throw new Error('Message handler not initialized')
+    await this.messageHandler.sendPayment(toPeerId, opts)
+  }
+
+  /**
    * Send a service request to another peer
    */
   async sendRequest(

@@ -730,6 +730,43 @@ async function main(): Promise<void> {
         return
       }
       
+      // POST /pay — Send a payment with BEEF envelope
+      if (req.method === 'POST' && req.url === '/pay') {
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', async () => {
+          try {
+            const { peerId, txid, vout, amount, toAddress, beef, memo, multiaddr: peerMultiaddr } = JSON.parse(body)
+            if (!peerId || !txid || amount === undefined || !toAddress) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing required fields: peerId, txid, amount, toAddress' }))
+              return
+            }
+            
+            // Dial via multiaddr if provided
+            if (peerMultiaddr) {
+              try {
+                const { multiaddr: ma } = await import('@multiformats/multiaddr')
+                await node.node.dial(ma(peerMultiaddr))
+              } catch (dialErr: any) {
+                log('WARN', 'API', `Multiaddr dial failed: ${dialErr.message}`)
+              }
+            }
+            
+            log('INFO', 'API', `Sending payment of ${amount} sats to ${peerId.substring(0, 16)}...${beef ? ' (with BEEF)' : ''}`)
+            await node.sendPayment(peerId, { txid, vout: vout ?? 0, amount, toAddress, beef, memo })
+            
+            res.writeHead(200)
+            res.end(JSON.stringify({ success: true, txid, amount, beef: !!beef }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Payment send failed: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+
       res.writeHead(404)
       res.end(JSON.stringify({ error: 'Not found' }))
     })

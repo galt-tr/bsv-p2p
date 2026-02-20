@@ -46,15 +46,15 @@ export function createAttestation(
   const message = `${peerId.toString()}:${bsvPublicKey.toString()}:${timestamp}`
   const messageHash = Hash.sha256(Buffer.from(message, 'utf8'))
   
-  // Sign with BSV private key
-  const rawSig = bsvPrivateKey.sign(messageHash)
-  const signature = new Signature(rawSig.r, rawSig.s)
+  // Sign with BSV private key (returns Signature object directly)
+  const signature = bsvPrivateKey.sign(messageHash)
   
   return {
     peerId: peerId.toString(),
     bsvIdentityKey: bsvPublicKey.toString(),
     timestamp,
-    signature: signature.toDER().toString('hex'),
+    // toDER() returns number array, must wrap in Buffer for hex encoding
+    signature: Buffer.from(signature.toDER()).toString('hex'),
     version: ATTESTATION_VERSION
   }
 }

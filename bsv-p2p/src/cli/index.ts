@@ -494,9 +494,28 @@ program
   })
 
 // ============ CONFIG COMMAND ============
-program
-  .command('config')
-  .description('View or update configuration')
+const configCmd = program.command('config')
+  .description('Manage configuration')
+
+configCmd
+  .command('show')
+  .description('View current configuration')
+  .action(() => {
+    const configFile = getConfigFile()
+    
+    let config: Record<string, any> = {}
+    if (existsSync(configFile)) {
+      config = JSON.parse(readFileSync(configFile, 'utf-8'))
+    }
+    
+    console.log(chalk.bold('\n⚙️  Configuration\n'))
+    console.log(JSON.stringify(config, null, 2))
+    console.log()
+  })
+
+configCmd
+  .command('set')
+  .description('Update configuration values')
   .option('--port <port>', 'Set daemon port')
   .option('--bsv-key <key>', 'Set BSV identity key')
   .action((options) => {
@@ -521,12 +540,115 @@ program
     
     if (changed) {
       writeFileSync(configFile, JSON.stringify(config, null, 2))
-      console.log(chalk.green('Configuration updated'))
+      console.log(chalk.green('✓ Configuration updated'))
+    } else {
+      console.log(chalk.yellow('No changes made'))
     }
     
     console.log(chalk.bold('\n⚙️  Configuration\n'))
     console.log(JSON.stringify(config, null, 2))
     console.log()
+  })
+
+configCmd
+  .command('encrypt')
+  .description('Encrypt config file with passphrase')
+  .option('-i, --input <file>', 'Input config file', join(getDataDir(), 'config.json'))
+  .option('-o, --output <file>', 'Output encrypted file', join(getDataDir(), 'config.encrypted.json'))
+  .action(async (options) => {
+    const { encryptConfig } = await import('../config/encryption.js')
+    const readline = await import('readline/promises')
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    })
+    
+    try {
+      if (!existsSync(options.input)) {
+        console.log(chalk.red(`Error: Input file not found: ${options.input}`))
+        process.exit(1)
+      }
+      
+      // Read plaintext config
+      const plaintext = readFileSync(options.input, 'utf-8')
+      
+      // Prompt for passphrase (with confirmation)
+      console.log(chalk.bold('\n🔐 Encrypt Configuration\n'))
+      const passphrase1 = await rl.question('Enter passphrase: ')
+      const passphrase2 = await rl.question('Confirm passphrase: ')
+      
+      if (passphrase1 !== passphrase2) {
+        console.log(chalk.red('\n✗ Passphrases do not match'))
+        process.exit(1)
+      }
+      
+      if (passphrase1.length < 8) {
+        console.log(chalk.red('\n✗ Passphrase must be at least 8 characters'))
+        process.exit(1)
+      }
+      
+      // Encrypt
+      console.log(chalk.gray('\nEncrypting...'))
+      const encrypted = await encryptConfig(plaintext, passphrase1)
+      
+      // Write encrypted file
+      writeFileSync(options.output, JSON.stringify(encrypted, null, 2))
+      
+      console.log(chalk.green(`\n✓ Config encrypted and saved to ${options.output}`))
+      console.log(chalk.yellow('\n⚠️  IMPORTANT: Keep your passphrase safe!'))
+      console.log(chalk.gray('Without it, you cannot decrypt your config.'))
+      console.log()
+    } finally {
+      rl.close()
+    }
+  })
+
+configCmd
+  .command('decrypt')
+  .description('Decrypt encrypted config file')
+  .option('-i, --input <file>', 'Input encrypted file', join(getDataDir(), 'config.encrypted.json'))
+  .option('-o, --output <file>', 'Output plaintext file', join(getDataDir(), 'config.decrypted.json'))
+  .action(async (options) => {
+    const { decryptConfig } = await import('../config/encryption.js')
+    const readline = await import('readline/promises')
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    })
+    
+    try {
+      if (!existsSync(options.input)) {
+        console.log(chalk.red(`Error: Input file not found: ${options.input}`))
+        process.exit(1)
+      }
+      
+      // Read encrypted config
+      const data = readFileSync(options.input, 'utf-8')
+      const encrypted = JSON.parse(data)
+      
+      // Prompt for passphrase
+      console.log(chalk.bold('\n🔓 Decrypt Configuration\n'))
+      const passphrase = await rl.question('Enter passphrase: ')
+      
+      // Decrypt
+      console.log(chalk.gray('\nDecrypting...'))
+      try {
+        const plaintext = await decryptConfig(encrypted, passphrase)
+        
+        // Write decrypted file
+        writeFileSync(options.output, plaintext)
+        
+        console.log(chalk.green(`\n✓ Config decrypted and saved to ${options.output}`))
+        console.log(chalk.yellow('\n⚠️  WARNING: Decrypted file contains sensitive data in plaintext'))
+        console.log()
+      } catch (error: any) {
+        console.log(chalk.red(`\n✗ Decryption failed: ${error.message}`))
+        console.log(chalk.gray('Check your passphrase and try again'))
+        process.exit(1)
+      }
+    } finally {
+      rl.close()
+    }
   })
 
 // ============ SETUP COMMAND ============

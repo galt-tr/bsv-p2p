@@ -105,6 +105,41 @@ async function loadConfig(): Promise<DaemonConfig> {
       config.bsvIdentityKey = keychainIdentityKey
     }
   } else {
+    // Priority 1.5: Try encrypted config file (if keychain unavailable)
+    const encryptedConfigPath = join(getDataDir(), 'config.encrypted.json')
+    
+    if (existsSync(encryptedConfigPath)) {
+      const passphrase = process.env.BSV_CONFIG_PASSPHRASE
+      
+      if (passphrase) {
+        try {
+          const { decryptConfig } = await import('../config/encryption.js')
+          const encryptedData = readFileSync(encryptedConfigPath, 'utf-8')
+          const encrypted = JSON.parse(encryptedData)
+          const decrypted = await decryptConfig(encrypted, passphrase)
+          const encryptedConf = JSON.parse(decrypted)
+          
+          console.log('[Config] Loading keys from encrypted config file')
+          
+          if (encryptedConf.bsvPrivateKey) {
+            config.bsvPrivateKey = encryptedConf.bsvPrivateKey
+          }
+          if (encryptedConf.bsvPublicKey) {
+            config.bsvPublicKey = encryptedConf.bsvPublicKey
+          }
+          if (encryptedConf.bsvIdentityKey) {
+            config.bsvIdentityKey = encryptedConf.bsvIdentityKey
+          }
+        } catch (error: any) {
+          console.log('[Config] ⚠️  Failed to decrypt config:', error.message)
+          console.log('[Config] Falling back to plaintext config')
+        }
+      } else {
+        console.log('[Config] Encrypted config found but no BSV_CONFIG_PASSPHRASE set')
+        console.log('[Config] Set BSV_CONFIG_PASSPHRASE environment variable to use encrypted config')
+      }
+    }
+    
     // Migration: If keys exist in plaintext config, offer to migrate
     if (config.bsvPrivateKey || config.bsvPublicKey || config.bsvIdentityKey) {
       const keychainAvailable = await keychain.isAvailable()

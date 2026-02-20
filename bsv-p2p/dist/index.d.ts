@@ -3,3 +3,5 @@ export type { P2PNodeConfig, PeerInfo, PeerAnnouncement, ServiceInfo, P2PNodeEve
 export { PROTOCOL_PREFIX, PROTOCOL_VERSION, TOPICS, PROTOCOLS, DEFAULT_CONFIG } from './daemon/types.js';
 export { GatewayClient, createGatewayClientFromEnv } from './daemon/gateway.js';
 export type { GatewayConfig, WakeOptions, AgentRunOptions, GatewayResponse } from './daemon/gateway.js';
+export { Wallet } from './wallet/index.js';
+export type { WalletConfig, TrackedUTXO } from './wallet/index.js';

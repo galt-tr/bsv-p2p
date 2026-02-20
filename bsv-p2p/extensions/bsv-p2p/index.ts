@@ -7,6 +7,7 @@
 
 import { P2PNode } from '../../src/daemon/node.js'
 import { ChannelManager } from '../../src/channels/manager.js'
+import { ChannelProtocol } from '../../src/channels/protocol.js'
 import { Wallet } from '../../src/wallet/index.js'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -25,6 +26,7 @@ interface BSVConfig {
 export default function register(api: any) {
   let p2pNode: P2PNode | null = null
   let channelManager: ChannelManager | null = null
+  let channelProtocol: ChannelProtocol | null = null
   let wallet: Wallet | null = null
 
   // Helper to expand ~ in paths
@@ -76,6 +78,17 @@ export default function register(api: any) {
         const peerId = p2pNode.getPeerId()
         api.logger.info(`[BSV P2P] Node started successfully`)
         api.logger.info(`[BSV P2P] Peer ID: ${peerId}`)
+        
+        // Initialize channel protocol for channel operations
+        if (p2pNode.messages && channelManager) {
+          channelProtocol = new ChannelProtocol({
+            channelManager,
+            messageHandler: p2pNode.messages,
+            peerId,
+            autoAcceptMaxCapacity: 100000 // Auto-accept channels up to 100k sats
+          })
+          api.logger.debug('[BSV P2P] Channel protocol initialized')
+        }
         
         // Handle incoming messages
         p2pNode.on('message', (msg: any) => {
@@ -344,21 +357,51 @@ export default function register(api: any) {
     }
   })
 
-  // Tool 5: p2p_channels - List payment channels
+  // Tool 5: p2p_channels - Manage payment channels (list, open, close)
   api.registerTool({
     name: 'p2p_channels',
-    description: 'List all payment channels and their balances. Use to check available channels before requesting paid services.',
+    description: 'Manage payment channels: list existing channels, open new channels, or close channels. Use to check available channels before requesting paid services.',
     parameters: {
       type: 'object',
       properties: {
+        action: {
+          type: 'string',
+          description: 'Action to perform',
+          enum: ['list', 'open', 'close'],
+          default: 'list'
+        },
         state: {
           type: 'string',
-          description: 'Filter by state: "pending", "open", "closing", or "closed"',
+          description: 'For list action: filter by state',
           enum: ['pending', 'open', 'closing', 'closed']
+        },
+        peerId: {
+          type: 'string',
+          description: 'For open action: remote peer ID to open channel with'
+        },
+        pubkey: {
+          type: 'string',
+          description: 'For open action: remote peer BSV public key (hex)'
+        },
+        satoshis: {
+          type: 'number',
+          description: 'For open action: channel capacity in satoshis'
+        },
+        channelId: {
+          type: 'string',
+          description: 'For close action: channel ID to close'
         }
-      }
+      },
+      required: ['action']
     },
-    async execute(_context: any, params: { state?: string }): Promise<any> {
+    async execute(_context: any, params: { 
+      action?: string
+      state?: string
+      peerId?: string
+      pubkey?: string
+      satoshis?: number
+      channelId?: string
+    }): Promise<any> {
       try {
         const check = ensureRunning()
         if (!check.ok) {
@@ -375,43 +418,129 @@ export default function register(api: any) {
           }
         }
 
-        const allChannels = channelManager.listChannels()
-        let channels = allChannels
-        
-        if (params.state) {
-          channels = channels.filter(c => c.state === params.state)
-        }
-        
-        if (channels.length === 0) {
+        const action = params.action || 'list'
+
+        // LIST action
+        if (action === 'list') {
+          const allChannels = channelManager.getAllChannels()
+          let channels = allChannels
+          
+          if (params.state) {
+            channels = channels.filter(c => c.state === params.state)
+          }
+          
+          if (channels.length === 0) {
+            return {
+              content: [{
+                type: 'text',
+                text: 'No payment channels found. Open a channel with action="open".'
+              }]
+            }
+          }
+          
+          const channelInfo = channels.map(ch => {
+            return [
+              `Channel: ${ch.id.substring(0, 16)}...`,
+              `  State: ${ch.state}`,
+              `  Peer: ${ch.remotePeerId.substring(0, 32)}...`,
+              `  Capacity: ${ch.capacity} sats`,
+              `  Your balance: ${ch.localBalance} sats`,
+              `  Their balance: ${ch.remoteBalance} sats`
+            ].join('\n')
+          }).join('\n\n')
+          
           return {
             content: [{
               type: 'text',
-              text: 'No payment channels found. Open a channel with: bsv-p2p channels open <peerId> <satoshis> --pubkey <remotePubKey>'
+              text: `Found ${channels.length} channel(s):\n\n${channelInfo}`
             }]
           }
         }
-        
-        const channelInfo = channels.map(ch => {
-          return [
-            `Channel: ${ch.id.substring(0, 16)}...`,
-            `  State: ${ch.state}`,
-            `  Peer: ${ch.remotePeerId.substring(0, 32)}...`,
-            `  Capacity: ${ch.capacity} sats`,
-            `  Your balance: ${ch.localBalance} sats`,
-            `  Their balance: ${ch.remoteBalance} sats`
-          ].join('\n')
-        }).join('\n\n')
-        
+
+        // OPEN action
+        if (action === 'open') {
+          if (!channelProtocol) {
+            return {
+              content: [{ type: 'text', text: 'Channel protocol not initialized' }],
+              isError: true
+            }
+          }
+
+          if (!params.peerId || !params.pubkey || !params.satoshis) {
+            return {
+              content: [{
+                type: 'text',
+                text: 'Missing required parameters for open action: peerId, pubkey, satoshis'
+              }],
+              isError: true
+            }
+          }
+
+          api.logger.info(`[BSV P2P] Opening channel with ${params.peerId.substring(0, 16)}... for ${params.satoshis} sats`)
+          
+          const channel = await channelProtocol.openChannel(
+            params.peerId,
+            params.pubkey,
+            params.satoshis,
+            30000 // 30 second timeout
+          )
+
+          return {
+            content: [{
+              type: 'text',
+              text: `Channel opened successfully!\n` +
+                    `  Channel ID: ${channel.id}\n` +
+                    `  Peer: ${channel.remotePeerId.substring(0, 32)}...\n` +
+                    `  Capacity: ${channel.capacity} sats\n` +
+                    `  State: ${channel.state}`
+            }]
+          }
+        }
+
+        // CLOSE action
+        if (action === 'close') {
+          if (!channelProtocol) {
+            return {
+              content: [{ type: 'text', text: 'Channel protocol not initialized' }],
+              isError: true
+            }
+          }
+
+          if (!params.channelId) {
+            return {
+              content: [{
+                type: 'text',
+                text: 'Missing required parameter for close action: channelId'
+              }],
+              isError: true
+            }
+          }
+
+          api.logger.info(`[BSV P2P] Closing channel ${params.channelId.substring(0, 16)}...`)
+          
+          await channelProtocol.closeChannel(params.channelId)
+
+          return {
+            content: [{
+              type: 'text',
+              text: `Channel close initiated: ${params.channelId.substring(0, 16)}...\n` +
+                    `The channel will close once both parties confirm.`
+            }]
+          }
+        }
+
         return {
           content: [{
             type: 'text',
-            text: `Found ${channels.length} channel(s):\n\n${channelInfo}`
-          }]
+            text: `Unknown action: ${action}. Valid actions: list, open, close`
+          }],
+          isError: true
         }
+
       } catch (err: any) {
         api.logger.error('[BSV P2P] p2p_channels error:', err)
         return {
-          content: [{ type: 'text', text: `Error listing channels: ${err.message}` }],
+          content: [{ type: 'text', text: `Error: ${err.message}` }],
           isError: true
         }
       }

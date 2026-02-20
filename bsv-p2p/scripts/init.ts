@@ -2,7 +2,10 @@
 /**
  * Initialize BSV P2P - generates keys and config
  * 
- * Usage: npx tsx scripts/init.ts
+ * Usage: npx tsx scripts/init.ts [--config-dir <path>]
+ * 
+ * Options:
+ *   --config-dir <path>  Config directory (default: ~/.bsv-p2p)
  */
 
 import { PrivateKey } from '@bsv/sdk'
@@ -10,7 +13,16 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
-const CONFIG_DIR = join(homedir(), '.bsv-p2p')
+function getConfigDir(): string {
+  const args = process.argv.slice(2)
+  const idx = args.indexOf('--config-dir')
+  if (idx !== -1 && args[idx + 1]) {
+    return args[idx + 1]
+  }
+  return join(homedir(), '.bsv-p2p')
+}
+
+const CONFIG_DIR = getConfigDir()
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json')
 
 interface Config {

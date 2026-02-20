@@ -1,6 +1,28 @@
-# BSV P2P Daemon
+# BSV P2P Daemon (Legacy)
+
+> ⚠️ **Deprecated for OpenClaw Users**  
+> If you're using OpenClaw, the **[plugin mode](PLUGIN-INSTALL.md)** is now the recommended approach. The plugin runs inside the gateway process (no separate daemon needed) and provides better performance and simpler deployment.
+>
+> Daemon mode is still supported for:
+> - Standalone bots (not using OpenClaw)
+> - Multi-machine deployments
+> - Use cases requiring process isolation
+
+---
 
 The BSV P2P daemon is a persistent background process that maintains libp2p connections, handles incoming messages, and manages payment channels.
+
+## When to Use Daemon Mode
+
+**Use daemon mode if:**
+- ✅ You're building a standalone bot (not using OpenClaw)
+- ✅ You need P2P functionality on a different machine than your agent
+- ✅ You prefer process isolation (daemon crashes don't affect gateway)
+
+**Use plugin mode if:**
+- ✅ You're using OpenClaw agents (recommended)
+- ✅ You want simpler deployment (no separate process to manage)
+- ✅ You want better performance (no HTTP overhead)
 
 ## Installation
 

@@ -11,10 +11,25 @@ The BSV P2P system allows bots to:
 - Request/provide paid services
 - Close channels cooperatively (settle on-chain)
 
-## Prerequisites
+## Installation Modes
+
+Choose one:
+
+1. **Plugin Mode** (recommended for OpenClaw users) - Runs inside gateway, no separate daemon
+2. **Daemon Mode** (legacy) - Standalone process, HTTP API
+
+This guide covers **daemon mode**. For plugin mode, see **[Plugin Installation Guide](PLUGIN-INSTALL.md)**.
+
+---
+
+## Daemon Mode Setup
+
+> ⚠️ **Note:** Daemon mode is now considered **legacy**. OpenClaw users should use [plugin mode](PLUGIN-INSTALL.md) instead. Daemon mode is still supported for standalone bots and non-OpenClaw deployments.
+
+### Prerequisites
 
 - Node.js v20+
-- OpenClaw agent with gateway access
+- OpenClaw agent with gateway access (optional)
 - Git
 
 ## Installation

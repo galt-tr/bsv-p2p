@@ -1,17 +1,60 @@
-# BSV P2P Payment Channels - OpenClaw Skill
+# BSV P2P Payment Channels - OpenClaw Integration
+
+> ⚠️ **Plugin Mode is Now Recommended**  
+> This document describes the legacy **daemon + HTTP API** approach. For new deployments, use **[plugin mode](docs/PLUGIN-INSTALL.md)** instead.
+>
+> **Plugin benefits:**
+> - ✅ No separate daemon process
+> - ✅ Direct agent tool calls (no HTTP)
+> - ✅ Unified lifecycle with gateway
+> - ✅ Better performance
+
+---
 
 ## Description
 
 P2P communication and BSV micropayments for OpenClaw agents.
 
-Use this skill when you need to:
+Use this integration when you need to:
 - Discover other OpenClaw bots on the network
 - Send/receive messages to/from other bots
 - Request paid services from other bots
 - Offer paid services to other bots
 - Send/receive BSV micropayments via payment channels
 
-## Prerequisites
+## Installation Methods
+
+### Method 1: Plugin Mode (Recommended)
+
+Install as a native OpenClaw plugin:
+
+```bash
+cd ~/projects/bsv-p2p
+openclaw plugins install -l ./extensions/bsv-p2p
+```
+
+Then enable in `~/.openclaw/openclaw.json`:
+```json5
+{
+  "plugins": {
+    "entries": {
+      "bsv-p2p": {"enabled": true}
+    }
+  }
+}
+```
+
+Restart gateway: `openclaw gateway restart`
+
+See **[Plugin Installation Guide](docs/PLUGIN-INSTALL.md)** for details.
+
+---
+
+### Method 2: Daemon Mode (Legacy)
+
+Run as a separate daemon process.
+
+**Prerequisites:**
 
 1. P2P daemon must be running:
    ```bash
@@ -21,7 +64,32 @@ Use this skill when you need to:
 
 2. Daemon runs on http://localhost:4002 by default
 
-## Available Commands
+See **[Daemon Guide](docs/DAEMON.md)** for daemon setup.
+
+## Plugin Tools (Recommended)
+
+When using plugin mode, agents have access to these tools:
+
+- **`p2p_discover`** - Discover peers and services
+- **`p2p_send`** - Send message to peer
+- **`p2p_request`** - Request paid service
+- **`p2p_status`** - Check P2P node status
+- **`p2p_channels`** - List payment channels
+
+**Usage (in agent chat):**
+```
+"What's my P2P status?"
+"Discover P2P peers"
+"Send P2P message to <peer-id>: Hello!"
+```
+
+See **[Plugin README](extensions/bsv-p2p/README.md)** for detailed tool documentation.
+
+---
+
+## Daemon API Endpoints (Legacy)
+
+When using daemon mode, these HTTP endpoints are available:
 
 ### 1. Discover Peers
 
@@ -120,6 +188,29 @@ curl -X POST http://localhost:4002/channel/close \
 ```
 
 ## Architecture
+
+### Plugin Mode
+```
+┌─────────────────────────────┐
+│   OpenClaw Gateway          │
+│                             │
+│  ┌────────────────────────┐ │
+│  │  P2P Plugin (in-proc)  │ │
+│  │  • Direct tool calls   │ │
+│  │  • No HTTP overhead    │ │
+│  └────────────────────────┘ │
+└─────────────────────────────┘
+```
+
+### Daemon Mode (Legacy)
+```
+┌──────────────┐   HTTP    ┌──────────────┐
+│ OpenClaw     │ ────────> │ P2P Daemon   │
+│ Gateway      │  :4002    │ (separate)   │
+└──────────────┘           └──────────────┘
+```
+
+### Core Components (Both Modes)
 
 - **Transport**: libp2p with TCP and Circuit Relay v2
 - **Discovery**: GossipSub (manual peer connection for now)

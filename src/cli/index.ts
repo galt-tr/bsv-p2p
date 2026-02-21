@@ -9,7 +9,7 @@ import { join } from 'path'
 
 const program = new Command()
 
-const API_PORT = 4002 // Daemon API port
+const API_PORT = 4003 // Daemon API port
 
 function getDataDir(): string {
   const dir = join(homedir(), '.bsv-p2p')
@@ -238,20 +238,33 @@ const peersCmd = program.command('peers')
 
 peersCmd
   .command('list')
-  .description('List connected peers')
+  .description('List all known peers')
   .action(async () => {
     try {
-      const result = await apiCall('GET', '/peers')
-      
+      const result = await apiCall('GET', '/peers/tracked')
+
       if (result.peers.length === 0) {
-        console.log(chalk.yellow('\nNo connected peers'))
-        console.log(chalk.gray('Connect to peers with: bsv-p2p peers connect <multiaddr>\n'))
+        console.log(chalk.yellow('\nNo tracked peers yet'))
         return
       }
-      
-      console.log(chalk.bold(`\n👥 Connected Peers (${result.peers.length})\n`))
-      result.peers.forEach((peer: any, i: number) => {
-        console.log(`${chalk.cyan((i + 1) + '.')} ${peer.peerId}`)
+
+      console.log(chalk.bold(`\n📝 Known Peers (${result.peers.length})\n`))
+      console.log(chalk.gray('Name'.padEnd(20) + 'PeerID'.padEnd(20) + 'Status'.padEnd(10) + 'Last Seen'.padEnd(25) + 'Msgs'))
+      console.log(chalk.gray('-'.repeat(85)))
+
+      result.peers.forEach((peer: any) => {
+        const shortId = peer.peerId.substring(0, 16) + '...'
+        const status = peer.isOnline ? chalk.green('online') : chalk.gray('offline')
+        const lastSeen = peer.lastSeen ? new Date(peer.lastSeen).toLocaleString() : 'Never'
+        const msgCount = peer.messagesReceived + peer.messagesSent
+
+        console.log(
+          peer.name.padEnd(20) +
+          shortId.padEnd(20) +
+          status.padEnd(19) +
+          lastSeen.padEnd(25) +
+          msgCount
+        )
       })
       console.log()
     } catch (err: any) {
@@ -265,6 +278,126 @@ peersCmd
   .action(async (multiaddr) => {
     console.log(chalk.yellow('Direct peer connection via CLI not yet implemented'))
     console.log(chalk.gray('Use the daemon API directly or wait for implementation'))
+  })
+
+peersCmd
+  .command('info <peerId>')
+  .description('Show detailed information about a tracked peer')
+  .action(async (peerId) => {
+    try {
+      const peer = await apiCall('GET', `/peers/tracked/${peerId}`)
+
+      console.log(chalk.bold('\n📋 Peer Details\n'))
+      console.log(`${chalk.cyan('Name:')} ${peer.name}`)
+      console.log(`${chalk.cyan('Peer ID:')} ${peer.peerId}`)
+      console.log(`${chalk.cyan('Status:')} ${peer.isOnline ? chalk.green('Online') : chalk.gray('Offline')}`)
+      console.log(`${chalk.cyan('First Seen:')} ${new Date(peer.firstSeen).toLocaleString()}`)
+      console.log(`${chalk.cyan('Last Seen:')} ${peer.lastSeen ? new Date(peer.lastSeen).toLocaleString() : 'Never'}`)
+
+      if (peer.lastConnected) {
+        console.log(`${chalk.cyan('Last Connected:')} ${new Date(peer.lastConnected).toLocaleString()}`)
+      }
+      if (peer.lastDisconnected) {
+        console.log(`${chalk.cyan('Last Disconnected:')} ${new Date(peer.lastDisconnected).toLocaleString()}`)
+      }
+
+      console.log(chalk.bold('\n📊 Statistics:'))
+      console.log(`  Messages Sent: ${peer.messagesSent}`)
+      console.log(`  Messages Received: ${peer.messagesReceived}`)
+      console.log(`  Payments Sent: ${peer.paymentsSent} (${peer.totalSatsSent} sats)`)
+      console.log(`  Payments Received: ${peer.paymentsReceived} (${peer.totalSatsReceived} sats)`)
+
+      if (peer.services.length > 0) {
+        console.log(chalk.bold('\n🛠  Services:'))
+        peer.services.forEach((service: string) => console.log(`  - ${service}`))
+      }
+
+      if (peer.tags.length > 0) {
+        console.log(chalk.bold('\n🏷  Tags:'))
+        peer.tags.forEach((tag: string) => console.log(`  - ${tag}`))
+      }
+
+      if (peer.notes) {
+        console.log(chalk.bold('\n📝 Notes:'))
+        console.log(`  ${peer.notes}`)
+      }
+
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
+  })
+
+peersCmd
+  .command('name <peerId> <name>')
+  .description('Set human-readable name for a peer')
+  .action(async (peerId, name) => {
+    try {
+      await apiCall('PUT', `/peers/tracked/${peerId}/name`, { name })
+      console.log(chalk.green(`✅ Updated name for ${peerId.substring(0, 16)}... to "${name}"`))
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
+  })
+
+peersCmd
+  .command('note <peerId> <note>')
+  .description('Set notes for a peer')
+  .action(async (peerId, note) => {
+    try {
+      await apiCall('PUT', `/peers/tracked/${peerId}/notes`, { notes: note })
+      console.log(chalk.green(`✅ Updated notes for ${peerId.substring(0, 16)}...`))
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
+  })
+
+peersCmd
+  .command('tag <peerId> [tags...]')
+  .description('Set tags for a peer')
+  .action(async (peerId, tags) => {
+    try {
+      await apiCall('PUT', `/peers/tracked/${peerId}/tags`, { tags })
+      console.log(chalk.green(`✅ Updated tags for ${peerId.substring(0, 16)}...: ${tags.join(', ')}`))
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
+  })
+
+peersCmd
+  .command('remove <peerId>')
+  .description('Remove peer from registry')
+  .action(async (peerId) => {
+    try {
+      await apiCall('DELETE', `/peers/tracked/${peerId}`)
+      console.log(chalk.green(`✅ Removed ${peerId.substring(0, 16)}... from registry`))
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
+  })
+
+peersCmd
+  .command('online')
+  .description('Show only online peers')
+  .action(async () => {
+    try {
+      const result = await apiCall('GET', '/peers/tracked')
+      const onlinePeers = result.peers.filter((p: any) => p.isOnline)
+
+      if (onlinePeers.length === 0) {
+        console.log(chalk.yellow('\nNo online peers'))
+        return
+      }
+
+      console.log(chalk.bold(`\n🟢 Online Peers (${onlinePeers.length})\n`))
+      onlinePeers.forEach((peer: any) => {
+        const shortId = peer.peerId.substring(0, 16) + '...'
+        console.log(`${chalk.cyan('•')} ${peer.name} (${shortId})`)
+      })
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+    }
   })
 
 // ============ CHANNELS COMMANDS ============

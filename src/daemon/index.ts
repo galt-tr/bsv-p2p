@@ -3,6 +3,7 @@
 import { P2PNode } from './node.js'
 import { GatewayConfig } from './gateway.js'
 import { MessageType, createBaseMessage } from '../protocol/messages.js'
+import { PeerTracker } from './peer-tracker.js'
 // Keychain is optional — may not be available on all systems
 let KeychainManager: any
 try {
@@ -433,12 +434,12 @@ function startRelayRetryBackgroundTask(node: P2PNode, initialTimeoutMs: number):
 
 async function main(): Promise<void> {
   const config = await loadConfig()
-  
+
   const envGateway = loadGatewayConfigFromEnv()
-  const gatewayConfig: GatewayConfig = envGateway.enabled 
-    ? envGateway 
+  const gatewayConfig: GatewayConfig = envGateway.enabled
+    ? envGateway
     : (config.gateway ?? { enabled: false })
-  
+
   log('INFO', 'STARTUP', '='.repeat(60))
   log('INFO', 'STARTUP', 'BSV P2P Daemon Starting')
   log('INFO', 'STARTUP', '='.repeat(60))
@@ -449,7 +450,7 @@ async function main(): Promise<void> {
     healthCheckInterval: `${config.healthCheckIntervalMs}ms`,
     mDNS: config.enableMdns
   })
-  
+
   const node = new P2PNode({
     port: config.port,
     ...(config.bootstrapPeers && config.bootstrapPeers.length > 0 ? { bootstrapPeers: config.bootstrapPeers } : {}),
@@ -458,6 +459,10 @@ async function main(): Promise<void> {
     dataDir: getDataDir(),
     gateway: gatewayConfig
   })
+
+  // Initialize PeerTracker
+  const peerTracker = new PeerTracker(getDataDir())
+  log('INFO', 'STARTUP', 'PeerTracker initialized')
 
   const shutdown = async (signal: string) => {
     log('INFO', 'SHUTDOWN', `Received ${signal}, shutting down...`)
@@ -477,7 +482,10 @@ async function main(): Promise<void> {
     log('INFO', 'STARTUP', 'Starting P2P node...')
     await node.start()
     log('INFO', 'STARTUP', `PeerId: ${node.peerId}`)
-    
+
+    // Mark all peers as offline on startup (clean slate)
+    peerTracker.markAllOffline()
+
     // Set BSV identity key if configured
     if (config.bsvIdentityKey) {
       node.setBsvIdentityKey(config.bsvIdentityKey)
@@ -521,18 +529,43 @@ async function main(): Promise<void> {
     node.startRelayConnectionMaintenance(10_000)
     log('INFO', 'STARTUP', 'Relay connection maintenance started (check every 10s)')
     
-    // Set up event logging
+    // Set up event logging and peer tracking
     node.on('peer:connected', (peerId) => {
       log('DEBUG', 'EVENT', `Peer connected: ${peerId}`)
+      peerTracker.recordConnected(peerId)
     })
-    
+
     node.on('peer:disconnected', (peerId) => {
       log('DEBUG', 'EVENT', `Peer disconnected: ${peerId}`)
+      peerTracker.recordDisconnected(peerId)
     })
-    
+
     node.on('announcement:received', (announcement) => {
       log('DEBUG', 'EVENT', `Announcement from ${announcement.peerId}: ${announcement.services.length} services`)
+      // Track peer and update their services
+      peerTracker.trackPeer(announcement.peerId)
+      if (announcement.services && announcement.services.length > 0) {
+        peerTracker.updateServices(announcement.peerId, announcement.services.map((s: any) => s.id || s.name))
+      }
     })
+
+    // Track incoming messages
+    node.on('message', ({ msg, peerId }: { msg: any, peerId: string }) => {
+      peerTracker.recordMessageReceived(peerId)
+    })
+
+    // Track payment messages specifically
+    node.on('message:payment', ({ msg, peerId }: { msg: any, peerId: string }) => {
+      if (msg.amount !== undefined) {
+        peerTracker.recordPaymentReceived(peerId, msg.amount)
+      }
+    })
+
+    // Mark currently connected peers as online
+    const connectedPeers = node.getConnectedPeers()
+    for (const peerId of connectedPeers) {
+      peerTracker.recordConnected(peerId)
+    }
     
     
     node.gatewayClient.on('wake', ({ text }) => {
@@ -569,12 +602,125 @@ async function main(): Promise<void> {
         return
       }
       
-      // Get list of connected peers
+      // Get list of connected peers (existing endpoint)
       if (req.method === 'GET' && req.url === '/peers') {
         res.writeHead(200)
         res.end(JSON.stringify({
           peers: node.getConnectedPeers().map(peerId => ({ peerId }))
         }))
+        return
+      }
+
+      // Get all tracked peers (persistent registry)
+      if (req.method === 'GET' && req.url === '/peers/tracked') {
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          peers: peerTracker.getAllPeers()
+        }))
+        return
+      }
+
+      // Get single tracked peer
+      if (req.method === 'GET' && req.url?.startsWith('/peers/tracked/') && !req.url.includes('/name') && !req.url.includes('/notes') && !req.url.includes('/tags')) {
+        const peerId = req.url.substring('/peers/tracked/'.length)
+        const peer = peerTracker.getPeer(peerId)
+        if (peer) {
+          res.writeHead(200)
+          res.end(JSON.stringify(peer))
+        } else {
+          res.writeHead(404)
+          res.end(JSON.stringify({ error: 'Peer not found' }))
+        }
+        return
+      }
+
+      // Update peer name
+      if (req.method === 'PUT' && req.url?.endsWith('/name')) {
+        const match = req.url.match(/^\/peers\/tracked\/(.+)\/name$/)
+        if (match) {
+          const peerId = match[1]
+          let body = ''
+          req.on('data', chunk => body += chunk)
+          req.on('end', () => {
+            try {
+              const { name } = JSON.parse(body)
+              if (!name) {
+                res.writeHead(400)
+                res.end(JSON.stringify({ error: 'Missing name field' }))
+                return
+              }
+              peerTracker.updateName(peerId, name)
+              res.writeHead(200)
+              res.end(JSON.stringify({ success: true, peerId, name }))
+            } catch (err: any) {
+              res.writeHead(500)
+              res.end(JSON.stringify({ error: err.message }))
+            }
+          })
+          return
+        }
+      }
+
+      // Update peer notes
+      if (req.method === 'PUT' && req.url?.endsWith('/notes')) {
+        const match = req.url.match(/^\/peers\/tracked\/(.+)\/notes$/)
+        if (match) {
+          const peerId = match[1]
+          let body = ''
+          req.on('data', chunk => body += chunk)
+          req.on('end', () => {
+            try {
+              const { notes } = JSON.parse(body)
+              if (notes === undefined) {
+                res.writeHead(400)
+                res.end(JSON.stringify({ error: 'Missing notes field' }))
+                return
+              }
+              peerTracker.setNotes(peerId, notes)
+              res.writeHead(200)
+              res.end(JSON.stringify({ success: true, peerId, notes }))
+            } catch (err: any) {
+              res.writeHead(500)
+              res.end(JSON.stringify({ error: err.message }))
+            }
+          })
+          return
+        }
+      }
+
+      // Update peer tags
+      if (req.method === 'PUT' && req.url?.endsWith('/tags')) {
+        const match = req.url.match(/^\/peers\/tracked\/(.+)\/tags$/)
+        if (match) {
+          const peerId = match[1]
+          let body = ''
+          req.on('data', chunk => body += chunk)
+          req.on('end', () => {
+            try {
+              const { tags } = JSON.parse(body)
+              if (!Array.isArray(tags)) {
+                res.writeHead(400)
+                res.end(JSON.stringify({ error: 'Tags must be an array' }))
+                return
+              }
+              peerTracker.setTags(peerId, tags)
+              res.writeHead(200)
+              res.end(JSON.stringify({ success: true, peerId, tags }))
+            } catch (err: any) {
+              res.writeHead(500)
+              res.end(JSON.stringify({ error: err.message }))
+            }
+          })
+          return
+        }
+      }
+
+      // Delete peer from registry
+      if (req.method === 'DELETE' && req.url?.startsWith('/peers/tracked/')) {
+        const peerId = req.url.substring('/peers/tracked/'.length)
+        peerTracker.removePeer(peerId)
+        res.writeHead(200)
+        res.end(JSON.stringify({ success: true, peerId, message: 'Peer removed from registry' }))
         return
       }
       
@@ -708,8 +854,7 @@ async function main(): Promise<void> {
             if (peerMultiaddr) {
               log('INFO', 'API', `Dialing peer via provided multiaddr: ${peerMultiaddr}`)
               try {
-                const { multiaddr: ma } = await import('@multiformats/multiaddr')
-                await node.node.dial(ma(peerMultiaddr))
+                await node.dial(peerMultiaddr)
                 log('INFO', 'API', `Connected via provided multiaddr`)
               } catch (dialErr: any) {
                 log('WARN', 'API', `Direct multiaddr dial failed: ${dialErr.message}, trying standard send...`)
@@ -718,7 +863,8 @@ async function main(): Promise<void> {
             
             log('INFO', 'API', `Sending message to ${peerId.substring(0, 16)}...`)
             await node.sendMessage(peerId, message)
-            
+            peerTracker.recordMessageSent(peerId)
+
             res.writeHead(200)
             res.end(JSON.stringify({ success: true, from: node.peerId }))
           } catch (err: any) {
@@ -746,8 +892,7 @@ async function main(): Promise<void> {
             // Dial via multiaddr if provided
             if (peerMultiaddr) {
               try {
-                const { multiaddr: ma } = await import('@multiformats/multiaddr')
-                await node.node.dial(ma(peerMultiaddr))
+                await node.dial(peerMultiaddr)
               } catch (dialErr: any) {
                 log('WARN', 'API', `Multiaddr dial failed: ${dialErr.message}`)
               }
@@ -755,7 +900,8 @@ async function main(): Promise<void> {
             
             log('INFO', 'API', `Sending payment of ${amount} sats to ${peerId.substring(0, 16)}...${beef ? ' (with BEEF)' : ''}`)
             await node.sendPayment(peerId, { txid, vout: vout ?? 0, amount, toAddress, beef, memo })
-            
+            peerTracker.recordPaymentSent(peerId, amount)
+
             res.writeHead(200)
             res.end(JSON.stringify({ success: true, txid, amount, beef: !!beef }))
           } catch (err: any) {

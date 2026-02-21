@@ -368,7 +368,70 @@ Error response format:
 
 ## 6. Security Considerations
 
-*[Moneo drafting — covers: threat model, channel security, identity & authentication, key management, DoS mitigations, privacy, known limitations]*
+Co-authored by Moneo 🪙 and Ghanima 🐆
+
+### 6.1 Threat Model
+
+This protocol assumes:
+- **Rational adversaries**: Peers act to maximize economic benefit
+- **Network adversary**: Attacker can observe, delay, or drop messages (but not forge signatures)
+- **No trusted third parties**: All security derives from cryptographic proofs and Bitcoin script
+
+### 6.2 Channel Security
+
+| Threat | Mitigation |
+|--------|------------|
+| Partner broadcasts old state | nSequence ordering — newer states always valid first |
+| Partner disappears | nLockTime force-close after 144 blocks (~24h) |
+| Double-spend funding | Wait for 1 confirmation before FUNDED message |
+| Malformed commitment tx | Validate all fields before signing; reject invalid |
+
+### 6.3 Identity & Authentication
+
+- **Peer identity**: libp2p PeerId (hash of public key) — unforgeable
+- **Payment identity**: secp256k1 pubkey for channel operations
+- **Message authentication**: All channel messages MUST be signed with payment key
+- **Replay protection**: Include channel_id + sequence in signed payload
+
+### 6.4 Key Management
+
+**REQUIRED:**
+- Payment keys MUST be stored encrypted at rest
+- Private keys MUST never be transmitted
+- Separate keys for identity (libp2p) and payments (channel operations)
+
+**RECOMMENDED:**
+- Rotate channel keys periodically (open new channel, close old)
+- Use hierarchical deterministic (HD) derivation for key generation
+
+### 6.5 Denial of Service
+
+| Attack | Mitigation |
+|--------|------------|
+| Channel spam | Require minimum funding (1000 sats recommended) |
+| Message flood | Rate limit at transport layer |
+| Abandoned channels | nLockTime ensures eventual fund recovery |
+| Resource exhaustion | Cap max concurrent channels per peer |
+
+### 6.6 Privacy Considerations
+
+- **On-chain**: Only funding and settlement visible; intermediate states private
+- **Network**: PeerIds are pseudonymous; link to real identity is application-layer concern
+- **Metadata**: Message timing may leak activity patterns; consider delays for sensitive use cases
+
+### 6.7 Known Limitations
+
+1. **No watchtower support**: Offline peer cannot detect broadcast of old state
+2. **Single relay dependency**: Circuit relay is trust-minimized but centralized
+3. **No atomic multi-hop**: Payments are single-hop only (no HTLCs)
+
+### 6.8 Recommendations
+
+For production deployments:
+- Implement state backup with encrypted cloud sync
+- Monitor mempool for unexpected channel broadcasts
+- Set conservative channel limits based on trust level
+- Log all state transitions for dispute evidence
 
 ---
 

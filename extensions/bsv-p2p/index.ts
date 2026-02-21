@@ -90,12 +90,33 @@ export default function register(api: any) {
       api.logger.info(`[BSV P2P] Node started successfully`)
       api.logger.info(`[BSV P2P] Peer ID: ${peerId}`)
 
-      // Handle incoming messages
+      // Handle incoming messages - wake agent via gateway hooks
       p2pNode.on('message', (msg: any) => {
+        const peerId = msg.from || 'unknown'
+        const shortPeerId = peerId.substring(0, 16) + '...'
+        const messageType = msg.type || 'message'
+        
         api.logger.debug('[BSV P2P] Received message:', {
-          from: msg.from?.substring(0, 16) + '...',
-          type: msg.type
+          from: shortPeerId,
+          type: messageType
         })
+
+        // Format message for agent
+        const content = typeof msg.content === 'string' 
+          ? msg.content 
+          : JSON.stringify(msg.content || {})
+        const preview = content.substring(0, 200)
+        const wakesMessage = `[P2P Message] From ${shortPeerId}: ${messageType}\n${preview}`
+
+        // Wake the agent with system event
+        try {
+          api.runtime.system.enqueueSystemEvent(wakesMessage, {
+            contextKey: `bsv-p2p:message:${peerId}:${Date.now()}`
+          })
+          api.logger.info(`[BSV P2P] Agent wake triggered for message from ${shortPeerId}`)
+        } catch (err: any) {
+          api.logger.error('[BSV P2P] Failed to wake agent:', err.message)
+        }
       })
 
       // Handle peer connections

@@ -615,6 +615,46 @@ async function main(): Promise<void> {
     }
     
     
+    // Set up context enricher — provides peer identity + message history
+    // to the agent before every P2P wake. This ensures agents always know
+    // who they're talking to, even after session resets or context compaction.
+    node.setContextEnricher((peerId: string) => {
+      const peer = peerTracker.getPeer(peerId)
+      const recentMessages = messageLogger.getConversation(peerId, 10, 0)
+      
+      let context = '=== PEER CONTEXT (auto-injected by bsv-p2p daemon) ===\n'
+      
+      // Peer identity
+      if (peer) {
+        context += `\nPeer: ${peer.name} (${peerId})`
+        context += `\nTags: ${peer.tags.length > 0 ? peer.tags.join(', ') : 'none'}`
+        context += `\nStatus: ${peer.isOnline ? 'online' : 'offline'}`
+        context += `\nFirst seen: ${new Date(peer.firstSeen).toISOString()}`
+        context += `\nMessages exchanged: ${peer.messagesSent + peer.messagesReceived} (${peer.messagesSent} sent, ${peer.messagesReceived} received)`
+        if (peer.notes) context += `\nNotes: ${peer.notes}`
+      } else {
+        context += `\nPeer: UNKNOWN (${peerId}) — first contact, no history`
+      }
+      
+      // Recent conversation history
+      if (recentMessages.messages.length > 0) {
+        context += `\n\nRecent conversation (last ${recentMessages.messages.length} of ${recentMessages.total} messages):`
+        // Show oldest first for chronological reading
+        const chronological = [...recentMessages.messages].reverse()
+        for (const m of chronological) {
+          const dir = m.direction === 'inbound' ? '←' : '→'
+          const time = new Date(m.timestamp).toLocaleTimeString()
+          const preview = m.content.length > 200 ? m.content.substring(0, 200) + '...' : m.content
+          context += `\n  ${dir} [${time}] ${preview}`
+        }
+      } else {
+        context += '\n\nNo prior messages with this peer.'
+      }
+      
+      context += '\n=== END PEER CONTEXT ==='
+      return context
+    })
+
     node.gatewayClient.on('wake', ({ text }) => {
       log('INFO', 'GATEWAY', `Woke agent: ${text.substring(0, 80)}...`)
     })

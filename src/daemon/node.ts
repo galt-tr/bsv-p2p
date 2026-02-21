@@ -736,6 +736,24 @@ export class P2PNode extends EventEmitter {
   }
 
   /**
+   * Set a context enricher function that adds peer history/identity context
+   * to messages before waking the agent. This is called by the daemon (index.ts)
+   * which has access to PeerTracker and MessageLogger.
+   * 
+   * The enricher receives a peerId and returns a context string with:
+   * - Peer name, tags, trust status from the peer tracker
+   * - Recent message history from the message logger
+   * 
+   * This ensures agents always have relationship context before responding,
+   * preventing trust confusion after session resets or context compaction.
+   */
+  private contextEnricher?: (peerId: string) => string
+
+  setContextEnricher(enricher: (peerId: string) => string): void {
+    this.contextEnricher = enricher
+  }
+
+  /**
    * Handle incoming P2P message and wake agent
    */
   private async handleIncomingMessage(msg: Message, peerId: string): Promise<void> {
@@ -751,8 +769,20 @@ export class P2PNode extends EventEmitter {
       return
     }
     
-    // Format message for agent
-    const text = formatMessageForAgent(msg, peerId)
+    // Format base message for agent
+    let text = formatMessageForAgent(msg, peerId)
+    
+    // Enrich with peer context (history, identity, trust) if available
+    if (this.contextEnricher) {
+      try {
+        const context = this.contextEnricher(peerId)
+        if (context) {
+          text = `${context}\n\n---\n\n${text}`
+        }
+      } catch (err) {
+        console.error(`[Message] Context enrichment failed: ${err}`)
+      }
+    }
     
     // Use /hooks/agent with a stable session key — all P2P messages go to one
     // dedicated session rather than spawning a new one each time. This keeps

@@ -4,6 +4,7 @@ import { P2PNode } from './node.js'
 import { GatewayConfig } from './gateway.js'
 import { MessageType, createBaseMessage } from '../protocol/messages.js'
 import { PeerTracker } from './peer-tracker.js'
+import { MessageLogger } from './message-logger.js'
 // Keychain is optional — may not be available on all systems
 let KeychainManager: any
 try {
@@ -464,9 +465,14 @@ async function main(): Promise<void> {
   const peerTracker = new PeerTracker(getDataDir())
   log('INFO', 'STARTUP', 'PeerTracker initialized')
 
+  // Initialize MessageLogger
+  const messageLogger = new MessageLogger(join(getDataDir(), 'messages.db'))
+  log('INFO', 'STARTUP', 'MessageLogger initialized')
+
   const shutdown = async (signal: string) => {
     log('INFO', 'SHUTDOWN', `Received ${signal}, shutting down...`)
     healthMonitor?.stop()
+    messageLogger.close()
     await node.stop()
     removePidFile()
     process.exit(0)
@@ -552,12 +558,32 @@ async function main(): Promise<void> {
     // Track incoming messages
     node.on('message', ({ msg, peerId }: { msg: any, peerId: string }) => {
       peerTracker.recordMessageReceived(peerId)
+      const peerName = peerTracker.getPeer(peerId)?.name || null
+      messageLogger.logMessage(
+        peerId,
+        peerName,
+        'inbound',
+        typeof msg.content === 'string' ? msg.content : JSON.stringify(msg),
+        msg.type || 'chat',
+        null,
+        msg.metadata ? JSON.stringify(msg.metadata) : null
+      )
     })
 
     // Track payment messages specifically
     node.on('message:payment', ({ msg, peerId }: { msg: any, peerId: string }) => {
       if (msg.amount !== undefined) {
         peerTracker.recordPaymentReceived(peerId, msg.amount)
+        const peerName = peerTracker.getPeer(peerId)?.name || null
+        const paymentContent = JSON.stringify({
+          txid: msg.txid,
+          vout: msg.vout,
+          amount: msg.amount,
+          toAddress: msg.toAddress,
+          memo: msg.memo,
+          beef: msg.beef ? '(included)' : undefined
+        })
+        messageLogger.logMessage(peerId, peerName, 'inbound', paymentContent, 'payment', null, msg.metadata ? JSON.stringify(msg.metadata) : null)
       }
     })
 
@@ -864,6 +890,8 @@ async function main(): Promise<void> {
             log('INFO', 'API', `Sending message to ${peerId.substring(0, 16)}...`)
             await node.sendMessage(peerId, message)
             peerTracker.recordMessageSent(peerId)
+            const peerName = peerTracker.getPeer(peerId)?.name || null
+            messageLogger.logMessage(peerId, peerName, 'outbound', message, 'chat')
 
             res.writeHead(200)
             res.end(JSON.stringify({ success: true, from: node.peerId }))
@@ -901,6 +929,9 @@ async function main(): Promise<void> {
             log('INFO', 'API', `Sending payment of ${amount} sats to ${peerId.substring(0, 16)}...${beef ? ' (with BEEF)' : ''}`)
             await node.sendPayment(peerId, { txid, vout: vout ?? 0, amount, toAddress, beef, memo })
             peerTracker.recordPaymentSent(peerId, amount)
+            const peerName = peerTracker.getPeer(peerId)?.name || null
+            const paymentContent = JSON.stringify({ txid, vout: vout ?? 0, amount, toAddress, memo, beef: beef ? '(included)' : undefined })
+            messageLogger.logMessage(peerId, peerName, 'outbound', paymentContent, 'payment')
 
             res.writeHead(200)
             res.end(JSON.stringify({ success: true, txid, amount, beef: !!beef }))
@@ -911,6 +942,82 @@ async function main(): Promise<void> {
           }
         })
         return
+      }
+
+      // GET /messages - Query messages
+      if (req.method === 'GET' && req.url?.startsWith('/messages')) {
+        const url = new URL(req.url, `http://localhost:${API_PORT}`)
+
+        // GET /messages/conversations
+        if (url.pathname === '/messages/conversations') {
+          try {
+            const conversations = messageLogger.getConversations()
+            res.writeHead(200)
+            res.end(JSON.stringify({ conversations }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Failed to get conversations: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+          return
+        }
+
+        // GET /messages/stats
+        if (url.pathname === '/messages/stats') {
+          try {
+            const stats = messageLogger.getStats()
+            res.writeHead(200)
+            res.end(JSON.stringify(stats))
+          } catch (err: any) {
+            log('ERROR', 'API', `Failed to get stats: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+          return
+        }
+
+        // GET /messages/:peerId - Get conversation with specific peer
+        const peerMatch = url.pathname.match(/^\/messages\/([^/]+)$/)
+        if (peerMatch) {
+          try {
+            const peerId = peerMatch[1]
+            const limit = parseInt(url.searchParams.get('limit') || '50')
+            const offset = parseInt(url.searchParams.get('offset') || '0')
+            const result = messageLogger.getConversation(peerId, limit, offset)
+            const peerName = peerTracker.getPeer(peerId)?.name || null
+            res.writeHead(200)
+            res.end(JSON.stringify({ ...result, peerId, peerName }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Failed to get conversation: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+          return
+        }
+
+        // GET /messages - Query all messages
+        if (url.pathname === '/messages') {
+          try {
+            const query = {
+              peerId: url.searchParams.get('peer') || undefined,
+              direction: url.searchParams.get('direction') as 'inbound' | 'outbound' | undefined,
+              since: url.searchParams.get('since') ? parseInt(url.searchParams.get('since')!) : undefined,
+              until: url.searchParams.get('until') ? parseInt(url.searchParams.get('until')!) : undefined,
+              limit: parseInt(url.searchParams.get('limit') || '50'),
+              offset: parseInt(url.searchParams.get('offset') || '0'),
+              search: url.searchParams.get('search') || undefined,
+              messageType: url.searchParams.get('type') || undefined
+            }
+            const result = messageLogger.getMessages(query)
+            res.writeHead(200)
+            res.end(JSON.stringify({ ...result, limit: query.limit, offset: query.offset }))
+          } catch (err: any) {
+            log('ERROR', 'API', `Failed to get messages: ${err.message}`)
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+          return
+        }
       }
 
       res.writeHead(404)

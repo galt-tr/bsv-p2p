@@ -1428,4 +1428,209 @@ program
     console.log()
   })
 
+// ============ MESSAGES COMMANDS ============
+const messagesCmd = program.command('messages')
+  .description('Message history and search')
+
+messagesCmd
+  .command('list')
+  .description('List messages')
+  .option('-p, --peer <id>', 'Filter by peer ID')
+  .option('-l, --limit <n>', 'Number of messages to show', '50')
+  .option('-o, --offset <n>', 'Offset for pagination', '0')
+  .option('-s, --search <query>', 'Full-text search')
+  .option('-d, --direction <dir>', 'Filter by direction (inbound|outbound)')
+  .option('-t, --type <type>', 'Filter by message type')
+  .action(async (options) => {
+    try {
+      const params = new URLSearchParams()
+      if (options.peer) params.set('peer', options.peer)
+      if (options.limit) params.set('limit', options.limit)
+      if (options.offset) params.set('offset', options.offset)
+      if (options.search) params.set('search', options.search)
+      if (options.direction) params.set('direction', options.direction)
+      if (options.type) params.set('type', options.type)
+
+      const result = await apiCall('GET', `/messages?${params}`)
+
+      if (result.messages.length === 0) {
+        console.log(chalk.yellow('\nNo messages found'))
+        return
+      }
+
+      console.log(chalk.bold('\nMessages:'))
+      console.log(chalk.gray('━'.repeat(80)))
+
+      // Table header
+      console.log(chalk.gray(
+        'Time'.padEnd(20) +
+        'Direction'.padEnd(10) +
+        'Peer'.padEnd(20) +
+        'Content'
+      ))
+      console.log(chalk.gray('─'.repeat(80)))
+
+      result.messages.forEach((msg: any) => {
+        const time = new Date(msg.timestamp).toLocaleString('en-US', {
+          hour12: false,
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        })
+
+        const dirIcon = msg.direction === 'inbound' ? '←' : '→'
+        const dirColor = msg.direction === 'inbound' ? chalk.cyan : chalk.green
+        const peerShort = msg.peerId.substring(0, 16) + '...'
+        const contentPreview = msg.content.length > 40
+          ? msg.content.substring(0, 37) + '...'
+          : msg.content
+
+        console.log(
+          chalk.gray(time.padEnd(20)) +
+          dirColor(dirIcon.padEnd(10)) +
+          chalk.yellow(peerShort.padEnd(20)) +
+          contentPreview
+        )
+      })
+
+      console.log(chalk.gray('─'.repeat(80)))
+      console.log(chalk.gray(`Showing ${result.messages.length} of ${result.total} messages`))
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+      process.exit(1)
+    }
+  })
+
+messagesCmd
+  .command('search <query>')
+  .description('Full-text search across all messages')
+  .option('-l, --limit <n>', 'Number of results to show', '20')
+  .action(async (query, options) => {
+    try {
+      const params = new URLSearchParams()
+      params.set('search', query)
+      params.set('limit', options.limit)
+
+      const result = await apiCall('GET', `/messages?${params}`)
+
+      if (result.messages.length === 0) {
+        console.log(chalk.yellow(`\nNo messages matching "${query}"`))
+        return
+      }
+
+      console.log(chalk.bold(`\nSearch results for "${query}":`))
+      console.log(chalk.gray('━'.repeat(80)))
+
+      result.messages.forEach((msg: any, idx: number) => {
+        const time = new Date(msg.timestamp).toLocaleString()
+        const dirIcon = msg.direction === 'inbound' ? '←' : '→'
+        const dirColor = msg.direction === 'inbound' ? chalk.cyan : chalk.green
+
+        console.log()
+        console.log(chalk.bold(`${idx + 1}. `) + chalk.gray(time))
+        console.log(`   ${dirColor(dirIcon)} ${chalk.yellow(msg.peerId.substring(0, 32))}...`)
+        console.log(`   ${msg.content.substring(0, 200)}`)
+      })
+
+      console.log()
+      console.log(chalk.gray(`Found ${result.total} matching messages`))
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+      process.exit(1)
+    }
+  })
+
+messagesCmd
+  .command('conversations')
+  .description('List conversations with peers')
+  .action(async () => {
+    try {
+      const result = await apiCall('GET', '/messages/conversations')
+
+      if (result.conversations.length === 0) {
+        console.log(chalk.yellow('\nNo conversations yet'))
+        return
+      }
+
+      console.log(chalk.bold('\nConversations:'))
+      console.log(chalk.gray('━'.repeat(80)))
+
+      // Table header
+      console.log(chalk.gray(
+        'Peer'.padEnd(40) +
+        'Messages'.padEnd(10) +
+        'Last Message'.padEnd(30)
+      ))
+      console.log(chalk.gray('─'.repeat(80)))
+
+      result.conversations.forEach((conv: any) => {
+        const peerDisplay = conv.peerName
+          ? `${conv.peerName} (${conv.peerId.substring(0, 16)}...)`
+          : conv.peerId.substring(0, 36) + '...'
+        const lastTime = new Date(conv.lastTimestamp).toLocaleString()
+
+        console.log(
+          chalk.yellow(peerDisplay.padEnd(40)) +
+          chalk.cyan(conv.messageCount.toString().padEnd(10)) +
+          chalk.gray(lastTime)
+        )
+        console.log(chalk.gray('  Last: ') + conv.lastMessage.substring(0, 60))
+        console.log()
+      })
+
+      console.log(chalk.gray(`Total: ${result.conversations.length} conversations`))
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+      process.exit(1)
+    }
+  })
+
+messagesCmd
+  .command('stats')
+  .description('Show message statistics')
+  .action(async () => {
+    try {
+      const stats = await apiCall('GET', '/messages/stats')
+
+      console.log(chalk.bold('\nMessage Statistics:'))
+      console.log(chalk.gray('━'.repeat(50)))
+
+      console.log(`${chalk.cyan('Total Messages:')}    ${stats.totalMessages}`)
+      console.log(`${chalk.green('  → Outbound:')}     ${stats.totalOutbound}`)
+      console.log(`${chalk.blue('  ← Inbound:')}      ${stats.totalInbound}`)
+      console.log(`${chalk.yellow('Unique Peers:')}     ${stats.uniquePeers}`)
+
+      if (stats.messagesByPeer.length > 0) {
+        console.log(chalk.bold('\nTop Peers by Message Count:'))
+        console.log(chalk.gray('─'.repeat(50)))
+
+        stats.messagesByPeer.forEach((peer: any, idx: number) => {
+          const peerDisplay = peer.peerName || peer.peerId.substring(0, 32) + '...'
+          console.log(`${(idx + 1).toString().padStart(2)}. ${chalk.yellow(peerDisplay.padEnd(35))} ${chalk.cyan(peer.count)} msgs`)
+        })
+      }
+
+      if (stats.messagesByDay.length > 0) {
+        console.log(chalk.bold('\nRecent Activity (messages per day):'))
+        console.log(chalk.gray('─'.repeat(50)))
+
+        stats.messagesByDay.slice(0, 7).forEach((day: any) => {
+          const barLength = Math.floor(day.count / Math.max(...stats.messagesByDay.map((d: any) => d.count)) * 30)
+          const bar = '█'.repeat(barLength)
+          console.log(`${day.date}  ${chalk.cyan(bar)} ${day.count}`)
+        })
+      }
+
+      console.log()
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`))
+      process.exit(1)
+    }
+  })
+
 program.parse()

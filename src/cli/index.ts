@@ -626,6 +626,69 @@ program
     }
   })
 
+// ============ STATUS COMMANDS ============
+const statusCmd = program.command('status')
+  .description('Node status and network health')
+
+statusCmd
+  .command('network')
+  .description('Show network status including all peers')
+  .action(async () => {
+    try {
+      const result = await apiCall('GET', '/status/network')
+
+      console.log(chalk.bold('\n🌐 Network Status\n'))
+
+      // Show our own status
+      console.log(chalk.green('Our Node:'))
+      console.log(`  Name: ${result.self.name}`)
+      console.log(`  PeerID: ${result.self.peerId}`)
+      console.log(`  Version: ${result.self.version}`)
+      console.log(`  Uptime: ${result.self.uptime}s`)
+      console.log(`  Connected Peers: ${result.self.connectedPeers}`)
+      console.log(`  Services: ${result.self.services.join(', ') || 'none'}`)
+      console.log(`  Multiaddrs: ${result.self.multiaddrs.length}`)
+
+      if (result.lastBroadcast) {
+        const ago = Math.floor((Date.now() - result.lastBroadcast) / 1000)
+        console.log(`  Last Broadcast: ${ago}s ago`)
+      }
+
+      // Show peer statuses
+      if (result.peers.length > 0) {
+        console.log(chalk.cyan('\nPeer Statuses:'))
+
+        // Create a table
+        const table = result.peers.map((p: any) => ({
+          Name: p.name || p.peerId.substring(0, 8),
+          PeerID: p.peerId.substring(0, 16) + '...',
+          Peers: p.connectedPeers,
+          Uptime: `${p.uptime}s`,
+          Services: p.services.length,
+          LastSeen: Math.floor((Date.now() - p.timestamp) / 1000) + 's ago'
+        }))
+
+        console.table(table)
+      } else {
+        console.log(chalk.gray('\nNo peer statuses received yet'))
+      }
+    } catch (err: any) {
+      console.error(chalk.red(`\nError: ${err.message}`))
+    }
+  })
+
+statusCmd
+  .command('broadcast')
+  .description('Trigger immediate status broadcast')
+  .action(async () => {
+    try {
+      await apiCall('POST', '/status/broadcast')
+      console.log(chalk.green('✓ Status broadcast triggered'))
+    } catch (err: any) {
+      console.error(chalk.red(`\nError: ${err.message}`))
+    }
+  })
+
 // ============ CONFIG COMMAND ============
 const configCmd = program.command('config')
   .description('Manage configuration')
@@ -653,24 +716,24 @@ configCmd
   .option('--bsv-key <key>', 'Set BSV identity key')
   .action((options) => {
     const configFile = getConfigFile()
-    
+
     let config: Record<string, any> = {}
     if (existsSync(configFile)) {
       config = JSON.parse(readFileSync(configFile, 'utf-8'))
     }
-    
+
     let changed = false
-    
+
     if (options.port) {
       config.port = parseInt(options.port, 10)
       changed = true
     }
-    
+
     if (options.bsvKey) {
       config.bsvIdentityKey = options.bsvKey
       changed = true
     }
-    
+
     if (changed) {
       writeFileSync(configFile, JSON.stringify(config, null, 2))
       console.log(chalk.green('✓ Configuration updated'))
@@ -681,6 +744,36 @@ configCmd
     console.log(chalk.bold('\n⚙️  Configuration\n'))
     console.log(JSON.stringify(config, null, 2))
     console.log()
+  })
+
+configCmd
+  .command('name <name>')
+  .description('Set the human-readable name for this node')
+  .action(async (name) => {
+    const status = isDaemonRunning()
+
+    // Update config file
+    const configFile = getConfigFile()
+    let config: Record<string, any> = {}
+    if (existsSync(configFile)) {
+      config = JSON.parse(readFileSync(configFile, 'utf-8'))
+    }
+    config.name = name
+    writeFileSync(configFile, JSON.stringify(config, null, 2))
+
+    // If daemon is running, also update via API
+    if (status.running) {
+      try {
+        await apiCall('PUT', '/config/name', { name })
+        console.log(chalk.green(`✓ Node name set to: ${name}`))
+      } catch (err: any) {
+        console.log(chalk.yellow(`⚠️  Updated config file but couldn't update running daemon: ${err.message}`))
+        console.log(chalk.yellow('Restart daemon for changes to take effect'))
+      }
+    } else {
+      console.log(chalk.green(`✓ Node name set to: ${name}`))
+      console.log(chalk.yellow('Start daemon for changes to take effect'))
+    }
   })
 
 configCmd

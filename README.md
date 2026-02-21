@@ -636,6 +636,58 @@ If you see an error like "P2P daemon not running", the plugin isn't loaded. Chec
 
 ---
 
+## Node Status & Heartbeat Integration
+
+bsv-p2p automatically broadcasts your node's status to the network every 60 seconds via GossipSub. Other nodes receive these broadcasts and update their local peer registry with your name, multiaddrs, and service list.
+
+### Setting Your Node Name
+
+Set a human-readable name for your node:
+
+```bash
+bsv-p2p config name "MyBot"
+```
+
+Or add `"name": "MyBot"` to `~/.bsv-p2p/config.json`.
+
+### What Gets Broadcast
+
+Every 60 seconds, your node publishes to the `node_status` GossipSub topic:
+
+- **name** — Your node's human-readable name
+- **multiaddrs** — Current network addresses (including relay)
+- **services** — Services you offer
+- **version** — bsv-p2p version
+- **uptime** — How long your node has been running
+- **connectedPeers** — Number of active connections
+
+### OpenClaw Heartbeat Integration
+
+If you're running bsv-p2p as an OpenClaw agent, add this to your `HEARTBEAT.md`:
+
+```markdown
+## P2P Network Status
+1. Check daemon health: `curl -s http://localhost:4003/health`
+2. Check network status: `curl -s http://localhost:4003/status/network`
+3. If daemon is unhealthy, restart: `sudo systemctl restart bsv-p2p`
+4. Note: Node status is automatically broadcast every 60 seconds — no manual action needed
+```
+
+### Monitoring Peer Activity
+
+```bash
+# See all peers and their status
+bsv-p2p status network
+
+# Force an immediate status broadcast
+bsv-p2p status broadcast
+
+# View tracked peers with names
+bsv-p2p peers list
+```
+
+---
+
 ## Agent Tool Reference
 
 When the OpenClaw plugin is active, agents have access to these tools:

@@ -29,6 +29,8 @@ interface DaemonConfig {
   gateway?: GatewayConfig
   healthCheckIntervalMs: number
   relayReservationTimeoutMs: number
+  name?: string  // Human-readable name for this node
+  statusBroadcastIntervalMs?: number  // How often to broadcast node status
 }
 
 const DEFAULT_DAEMON_CONFIG: DaemonConfig = {
@@ -38,7 +40,8 @@ const DEFAULT_DAEMON_CONFIG: DaemonConfig = {
   enableMdns: false,  // Disabled - causes version conflicts
   announceIntervalMs: 300000,  // 5 minutes
   healthCheckIntervalMs: 30000,  // 30 seconds
-  relayReservationTimeoutMs: 30000  // 30 seconds to get relay reservation
+  relayReservationTimeoutMs: 30000,  // 30 seconds to get relay reservation
+  statusBroadcastIntervalMs: 60000  // 1 minute
 }
 
 // Debug logging with timestamps
@@ -433,6 +436,9 @@ function startRelayRetryBackgroundTask(node: P2PNode, initialTimeoutMs: number):
   })
 }
 
+// Store for recently received node status messages
+const nodeStatusMap = new Map<string, any>()
+
 async function main(): Promise<void> {
   const config = await loadConfig()
 
@@ -587,6 +593,21 @@ async function main(): Promise<void> {
       }
     })
 
+    // Track node status broadcasts
+    node.on('node-status', (msg: any) => {
+      log('DEBUG', 'NODE_STATUS', `Received status from ${msg.name} (${msg.peerId.substring(0, 16)}...): ${msg.connectedPeers} peers, uptime ${msg.uptime}s`)
+
+      // Store the status message
+      nodeStatusMap.set(msg.peerId, msg)
+
+      // Update peer tracker with the status info
+      peerTracker.trackPeer(msg.peerId)
+      peerTracker.updateName(msg.peerId, msg.name)
+      peerTracker.updateMultiaddrs(msg.peerId, msg.multiaddrs)
+      peerTracker.updateServices(msg.peerId, msg.services)
+      peerTracker.recordConnected(msg.peerId)  // Mark as online since they just broadcast
+    })
+
     // Mark currently connected peers as online
     const connectedPeers = node.getConnectedPeers()
     for (const peerId of connectedPeers) {
@@ -628,6 +649,46 @@ async function main(): Promise<void> {
         return
       }
       
+      // GET /config/name - Get the node's name
+      if (req.method === 'GET' && req.url === '/config/name') {
+        res.writeHead(200)
+        res.end(JSON.stringify({
+          name: config.name || node.peerId.substring(0, 8)
+        }))
+        return
+      }
+
+      // PUT /config/name - Set the node's name
+      if (req.method === 'PUT' && req.url === '/config/name') {
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', () => {
+          try {
+            const { name } = JSON.parse(body)
+            if (!name) {
+              res.writeHead(400)
+              res.end(JSON.stringify({ error: 'Missing name field' }))
+              return
+            }
+
+            // Update the in-memory config
+            config.name = name
+
+            // Save to config file
+            const configPath = join(getDataDir(), 'config.json')
+            writeFileSync(configPath, JSON.stringify(config, null, 2))
+
+            log('INFO', 'CONFIG', `Node name updated to: ${name}`)
+            res.writeHead(200)
+            res.end(JSON.stringify({ success: true, name }))
+          } catch (err: any) {
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: err.message }))
+          }
+        })
+        return
+      }
+
       // Get list of connected peers (existing endpoint)
       if (req.method === 'GET' && req.url === '/peers') {
         res.writeHead(200)
@@ -1018,6 +1079,63 @@ async function main(): Promise<void> {
           }
           return
         }
+      }
+
+      // GET /status/network - Get our status and all peer statuses
+      if (req.method === 'GET' && req.url === '/status/network') {
+        try {
+          const statusBroadcaster = node.getStatusBroadcaster()
+          const uptime = statusBroadcaster ? Math.floor((Date.now() - statusBroadcaster['startTime']) / 1000) : 0
+
+          // Build our own status
+          const selfStatus = {
+            peerId: node.peerId,
+            name: config.name || node.peerId.substring(0, 8),
+            multiaddrs: node.multiaddrs,
+            services: node.getServices().map(s => s.id),
+            version: (() => {
+              try {
+                const packagePath = join(getDataDir(), '..', '..', 'package.json')
+                const packageData = JSON.parse(readFileSync(packagePath, 'utf-8'))
+                return packageData.version || 'unknown'
+              } catch {
+                return 'unknown'
+              }
+            })(),
+            uptime,
+            connectedPeers: node.getConnectedPeers().length,
+            timestamp: Date.now()
+          }
+
+          // Get all peer statuses
+          const peers = Array.from(nodeStatusMap.values())
+
+          res.writeHead(200)
+          res.end(JSON.stringify({
+            self: selfStatus,
+            peers,
+            lastBroadcast: statusBroadcaster ? statusBroadcaster.getLastBroadcast() : null
+          }))
+        } catch (err: any) {
+          log('ERROR', 'API', `Failed to get network status: ${err.message}`)
+          res.writeHead(500)
+          res.end(JSON.stringify({ error: err.message }))
+        }
+        return
+      }
+
+      // POST /status/broadcast - Trigger immediate status broadcast
+      if (req.method === 'POST' && req.url === '/status/broadcast') {
+        try {
+          await node.broadcastStatus()
+          res.writeHead(200)
+          res.end(JSON.stringify({ success: true, message: 'Status broadcast triggered' }))
+        } catch (err: any) {
+          log('ERROR', 'API', `Failed to broadcast status: ${err.message}`)
+          res.writeHead(500)
+          res.end(JSON.stringify({ error: err.message }))
+        }
+        return
       }
 
       res.writeHead(404)

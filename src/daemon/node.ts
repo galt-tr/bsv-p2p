@@ -34,6 +34,7 @@ import {
 import { GatewayClient, GatewayConfig } from './gateway.js'
 import { MessageHandler, formatMessageForAgent, Message, MessageType, TextMessage, RequestMessage, PaidRequestMessage, MESSAGE_PROTOCOL } from '../protocol/index.js'
 import { DiscoveryService } from './discovery.js'
+import { StatusBroadcaster } from './status-broadcaster.js'
 
 const KEY_FILE = join(homedir(), '.bsv-p2p', 'peer-key.json')
 const RELAY_ADDR = '/ip4/167.172.134.84/tcp/4001/p2p/12D3KooWAcdYkneggrQd3eWBMdcjqHiTNSV81HABRcgrvXywcnDs'
@@ -96,6 +97,9 @@ export class P2PNode extends EventEmitter {
   private announcementInterval: NodeJS.Timeout | null = null
   private messageHandler: MessageHandler | null = null
   private discovery: DiscoveryService | null = null
+  private statusBroadcaster: StatusBroadcaster | null = null
+  private nodeName: string | undefined
+  private statusBroadcastIntervalMs: number
   // Track all registered event listeners for cleanup
   private eventListeners: Array<{ target: any; event: string; handler: any }> = []
 
@@ -105,7 +109,9 @@ export class P2PNode extends EventEmitter {
     this.config = { ...DEFAULT_CONFIG, ...nodeConfig }
     this.gatewayConfig = gateway ?? {}
     this.gateway = new GatewayClient(this.gatewayConfig)
-    
+    this.nodeName = config.name
+    this.statusBroadcastIntervalMs = config.statusBroadcastIntervalMs ?? 60000
+
     // Initialize bounded peer storage with LRU cache
     this.peers = new LRUCache<string, PeerInfo>({
       max: 1000,                          // Max 1000 peers
@@ -451,6 +457,28 @@ export class P2PNode extends EventEmitter {
       console.warn('[Discovery] PubSub not available, discovery disabled')
     }
 
+    // Initialize status broadcaster
+    if (pubsub) {
+      this.statusBroadcaster = new StatusBroadcaster(
+        this.peerId,
+        this.nodeName,
+        () => this.multiaddrs,
+        () => this.services.map(s => s.id),
+        () => this.getConnectedPeers(),
+        { broadcastIntervalMs: this.statusBroadcastIntervalMs }
+      )
+
+      // Forward status-received events from broadcaster to node
+      const statusHandler = (status: any) => {
+        this.emit('node-status', status)
+      }
+      this.statusBroadcaster.on('status-received', statusHandler)
+      this.eventListeners.push({ target: this.statusBroadcaster, event: 'status-received', handler: statusHandler })
+
+      await this.statusBroadcaster.start(pubsub)
+      console.log('[StatusBroadcaster] Service initialized')
+    }
+
     console.log(`P2P node started with PeerId: ${this.peerId}`)
     console.log(`Listening on: ${this.multiaddrs.join(', ')}`)
   }
@@ -488,6 +516,12 @@ export class P2PNode extends EventEmitter {
     if (this.discovery) {
       await this.discovery.stop()
       this.discovery = null
+    }
+
+    // Stop status broadcaster
+    if (this.statusBroadcaster) {
+      await this.statusBroadcaster.stop()
+      this.statusBroadcaster = null
     }
     
     // Clear message handler
@@ -810,6 +844,29 @@ export class P2PNode extends EventEmitter {
     if (this.discovery) {
       this.discovery.setBsvIdentityKey(key)
     }
+  }
+
+  setNodeName(name: string): void {
+    this.nodeName = name
+    if (this.statusBroadcaster) {
+      this.statusBroadcaster.setNodeName(name)
+    }
+  }
+
+  getNodeName(): string {
+    return this.nodeName || this.peerId.substring(0, 8)
+  }
+
+  async broadcastStatus(): Promise<void> {
+    if (this.statusBroadcaster) {
+      await this.statusBroadcaster.broadcast()
+    } else {
+      console.warn('[P2PNode] Status broadcaster not initialized')
+    }
+  }
+
+  getStatusBroadcaster(): StatusBroadcaster | null {
+    return this.statusBroadcaster
   }
 
   registerService(service: ServiceInfo): void {

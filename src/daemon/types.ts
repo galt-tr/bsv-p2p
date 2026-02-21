@@ -13,6 +13,10 @@ export interface P2PNodeConfig {
   gateway?: GatewayConfig
   /** Use ephemeral key instead of loading from disk (useful for tests) */
   ephemeralKey?: boolean
+  /** Human-readable name for this node */
+  name?: string
+  /** How often to broadcast node status (default: 60000ms = 1 minute) */
+  statusBroadcastIntervalMs?: number
 }
 
 export interface PeerInfo {
@@ -41,12 +45,24 @@ export interface PeerAnnouncement {
   signature: string
 }
 
+export interface NodeStatusMessage {
+  peerId: string
+  name: string              // Human-readable name (e.g., "Ghanima", "Moneo")
+  multiaddrs: string[]      // Full multiaddrs including relay addrs
+  services: string[]        // Service IDs offered
+  version: string           // bsv-p2p version
+  uptime: number            // Seconds since daemon start
+  connectedPeers: number    // Number of currently connected peers
+  timestamp: number         // Unix ms
+}
+
 export interface P2PNodeEvents {
   'peer:discovered': (peer: PeerInfo) => void
   'peer:connected': (peerId: string) => void
   'peer:disconnected': (peerId: string) => void
   'message:received': (from: string, message: any) => void
   'announcement:received': (announcement: PeerAnnouncement) => void
+  'node-status': (status: NodeStatusMessage) => void
 }
 
 export const PROTOCOL_PREFIX = '/openclaw'
@@ -54,7 +70,8 @@ export const PROTOCOL_VERSION = '1.0.0'
 
 export const TOPICS = {
   ANNOUNCE: `${PROTOCOL_PREFIX}/announce/1.0.0`,
-  SERVICES: `${PROTOCOL_PREFIX}/services/1.0.0`
+  SERVICES: `${PROTOCOL_PREFIX}/services/1.0.0`,
+  NODE_STATUS: `${PROTOCOL_PREFIX}/node-status/1.0.0`
 } as const
 
 export const PROTOCOLS = {
@@ -63,7 +80,7 @@ export const PROTOCOLS = {
   HANDSHAKE: `${PROTOCOL_PREFIX}/handshake/1.0.0`
 } as const
 
-export const DEFAULT_CONFIG: Required<Omit<P2PNodeConfig, 'gateway'>> = {
+export const DEFAULT_CONFIG: Required<Omit<P2PNodeConfig, 'gateway' | 'name'>> & { name?: string } = {
   port: 4001,
   bootstrapPeers: [
     // Default libp2p bootstrap peers (IPFS)
@@ -75,5 +92,7 @@ export const DEFAULT_CONFIG: Required<Omit<P2PNodeConfig, 'gateway'>> = {
   announceAddrs: [],
   dataDir: '~/.bsv-p2p',
   enableMdns: true,
-  ephemeralKey: false
+  ephemeralKey: false,
+  name: undefined,
+  statusBroadcastIntervalMs: 60000
 }

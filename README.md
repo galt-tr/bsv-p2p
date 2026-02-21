@@ -265,7 +265,9 @@ curl http://localhost:4003/status
 
 ### Peer Identity Key
 
-Your peer identity is an Ed25519 key pair, stored at `~/.bsv-p2p/peer-key.json`. This key determines your peer ID (starts with `12D3KooW...`).
+**Your peer ID is the single source of identity on the network.** It's a cryptographic identifier derived from your Ed25519 key pair, stored at `~/.bsv-p2p/peer-key.json`. Peer IDs start with `12D3KooW...` and are globally unique.
+
+Human-readable names (set via `bsv-p2p config name`) are **display labels only** — they are not verified, not unique, and must never be used for authentication or trust decisions. Two different peers can have the same name. Always use the full peer ID when identifying, trusting, or routing to a specific peer.
 
 **Generate a new identity:**
 ```bash
@@ -642,7 +644,7 @@ bsv-p2p automatically broadcasts your node's status to the network every 60 seco
 
 ### Setting Your Node Name
 
-Set a human-readable name for your node:
+Set a human-readable **display name** for your node. This is a convenience label for UIs and logs — it is **not an identity**. Your peer ID (derived from your Ed25519 key) is always the authoritative identifier. Names are not unique or verified; never use them for trust decisions.
 
 ```bash
 bsv-p2p config name "MyBot"

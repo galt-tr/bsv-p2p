@@ -628,7 +628,65 @@ program
 
 // ============ STATUS COMMANDS ============
 const statusCmd = program.command('status')
-  .description('Node status and network health')
+  .description('Show comprehensive system status')
+  .action(async () => {
+    const daemonStatus = isDaemonRunning()
+    
+    console.log(chalk.bold('\n🔌 BSV P2P System Status\n'))
+    console.log(chalk.bold('━'.repeat(50)))
+    
+    // Daemon
+    console.log(chalk.bold('\nDaemon:'))
+    if (daemonStatus.running) {
+      console.log(`  ${chalk.green('●')} Running (PID: ${daemonStatus.pid})`)
+      
+      try {
+        const info = await apiCall('GET', '/status')
+        console.log(`  ${chalk.gray('Uptime:')} ${Math.floor((Date.now() - info.startTime) / 1000)}s`)
+        console.log(`  ${chalk.gray('Peer ID:')} ${info.peerId || 'unknown'}`)
+      } catch {
+        console.log(`  ${chalk.yellow('⚠')} API unreachable`)
+      }
+    } else {
+      console.log(`  ${chalk.red('○')} Not running`)
+    }
+    
+    // Network
+    console.log(chalk.bold('\nNetwork:'))
+    if (daemonStatus.running) {
+      try {
+        const info = await apiCall('GET', '/status')
+        const peers = await apiCall('GET', '/peers')
+        console.log(`  ${chalk.gray('Relay:')} ${info.relayAddress || 'disconnected'}`)
+        if (info.relayReservation) {
+          console.log(`  ${chalk.gray('Reservation:')} ${chalk.green('active')}`)
+        }
+        console.log(`  ${chalk.gray('Connected peers:')} ${peers.peers?.length || 0}`)
+      } catch {
+        console.log(`  ${chalk.yellow('⚠')} Status unavailable`)
+      }
+    } else {
+      console.log(`  ${chalk.gray('Status:')} daemon not running`)
+    }
+    
+    // Messages
+    console.log(chalk.bold('\nMessages:'))
+    if (daemonStatus.running) {
+      try {
+        const stats = await apiCall('GET', '/messages/stats')
+        console.log(`  ${chalk.gray('Total messages:')} ${stats.totalMessages}`)
+        console.log(`  ${chalk.gray('Inbound:')} ${stats.totalInbound}`)
+        console.log(`  ${chalk.gray('Outbound:')} ${stats.totalOutbound}`)
+        console.log(`  ${chalk.gray('Unique peers:')} ${stats.uniquePeers}`)
+      } catch {
+        console.log(`  ${chalk.yellow('⚠')} Status unavailable`)
+      }
+    } else {
+      console.log(`  ${chalk.gray('Status:')} daemon not running`)
+    }
+    
+    console.log()
+  })
 
 statusCmd
   .command('network')
@@ -1275,94 +1333,6 @@ program
     console.log('     ' + chalk.cyan('bsv-p2p channels open <peerId> <satoshis> --pubkey <key>'))
     console.log()
     console.log(chalk.gray('For more help, visit: https://github.com/galt-tr/bsv-p2p'))
-    console.log()
-  })
-
-// ============ STATUS COMMAND ============
-program
-  .command('status')
-  .description('Show comprehensive system status')
-  .action(async () => {
-    const daemonStatus = isDaemonRunning()
-    
-    console.log(chalk.bold('\n🔌 BSV P2P System Status\n'))
-    console.log(chalk.bold('━'.repeat(50)))
-    
-    // Daemon
-    console.log(chalk.bold('\nDaemon:'))
-    if (daemonStatus.running) {
-      console.log(`  ${chalk.green('●')} Running (PID: ${daemonStatus.pid})`)
-      
-      try {
-        const info = await apiCall('GET', '/status')
-        console.log(`  ${chalk.gray('Uptime:')} ${Math.floor((Date.now() - info.startTime) / 1000)}s`)
-        console.log(`  ${chalk.gray('Peer ID:')} ${info.peerId || 'unknown'}`)
-      } catch {
-        console.log(`  ${chalk.yellow('⚠')} API unreachable`)
-      }
-    } else {
-      console.log(`  ${chalk.red('○')} Not running`)
-    }
-    
-    // Network
-    console.log(chalk.bold('\nNetwork:'))
-    if (daemonStatus.running) {
-      try {
-        const info = await apiCall('GET', '/status')
-        const peers = await apiCall('GET', '/peers')
-        console.log(`  ${chalk.gray('Relay:')} ${info.relayAddress || 'disconnected'}`)
-        if (info.relayReservation) {
-          console.log(`  ${chalk.gray('Reservation:')} ${chalk.green('active')}`)
-        }
-        console.log(`  ${chalk.gray('Connected peers:')} ${peers.peers?.length || 0}`)
-      } catch {
-        console.log(`  ${chalk.yellow('⚠')} Status unavailable`)
-      }
-    } else {
-      console.log(`  ${chalk.gray('Status:')} daemon not running`)
-    }
-    
-    // Channels
-    console.log(chalk.bold('\nPayment Channels:'))
-    if (daemonStatus.running) {
-      try {
-        const result = await apiCall('GET', '/channels')
-        const channels = result.channels || []
-        const openChannels = channels.filter((c: any) => c.state === 'open')
-        const totalCapacity = channels.reduce((sum: number, c: any) => sum + c.capacity, 0)
-        const localBalance = channels.reduce((sum: number, c: any) => sum + c.localBalance, 0)
-        
-        console.log(`  ${chalk.gray('Total channels:')} ${channels.length} (${openChannels.length} open)`)
-        console.log(`  ${chalk.gray('Total capacity:')} ${totalCapacity} sats`)
-        console.log(`  ${chalk.gray('Local balance:')} ${localBalance} sats`)
-      } catch {
-        console.log(`  ${chalk.yellow('⚠')} Status unavailable`)
-      }
-    } else {
-      console.log(`  ${chalk.gray('Status:')} daemon not running`)
-    }
-    
-    // BSV Wallet (placeholder)
-    console.log(chalk.bold('\nBSV Wallet:'))
-    console.log(`  ${chalk.gray('Status:')} ${chalk.yellow('not integrated')}`)
-    
-    // OpenClaw Integration
-    console.log(chalk.bold('\nOpenClaw Integration:'))
-    const hasOpenClaw = existsSync(join(homedir(), '.openclaw'))
-    if (hasOpenClaw) {
-      console.log(`  ${chalk.green('✓')} OpenClaw detected`)
-      // Check if skill is registered
-      const skillsDir = join(homedir(), '.openclaw', 'skills', 'bsv-p2p')
-      if (existsSync(skillsDir)) {
-        console.log(`  ${chalk.green('✓')} Skill registered`)
-      } else {
-        console.log(`  ${chalk.yellow('⚠')} Skill not registered`)
-      }
-    } else {
-      console.log(`  ${chalk.gray('○')} OpenClaw not detected`)
-    }
-    
-    console.log(chalk.bold('\n' + '━'.repeat(50)))
     console.log()
   })
 
